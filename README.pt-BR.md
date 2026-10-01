@@ -287,6 +287,8 @@ Você não precisa desta parte para usar o mod.
 
 Um arquivo `.tpf` é um zip codificado com XOR e protegido com a senha fixa do TexMod. O `ds2tex.py` decodifica, verifica cada textura (formato, tamanho, arquivo danificado) e salva em `texmod/_cache/` com o hash no nome.
 
+Com o Pillow instalado (`sudo pacman -S python-pillow`), ele também deixa cada textura pronta para o jogo: imagens PNG, BMP, TGA e JPG viram DDS sem compressão, com a mesma qualidade, e todo DDS ganha a cadeia de mipmaps. Assim o jogo não precisa decodificar imagens nem gerar mipmaps na hora, o que causava engasgos ao entrar em áreas novas. Sem o Pillow, os arquivos são copiados como estão.
+
 **Para compilar você mesmo:**
 
 ```sh

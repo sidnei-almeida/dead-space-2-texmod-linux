@@ -9,6 +9,11 @@ DLL (plugins/DS2TexInject.asi) carrega dentro do jogo.
 Prioridade: se dois pacotes trazem o mesmo hash, vence o que vem PRIMEIRO na
 ordem (texmod/load_order.txt se existir, senao ordem alfabetica dos nomes).
 
+Com o Pillow instalado, cada textura tambem e deixada pronta para uso: PNG/BMP/TGA/JPG
+viram DDS sem compressao (mesma qualidade) e todo DDS ganha a cadeia de mipmaps. Assim o
+jogo nao precisa decodificar imagem nem gerar mipmaps na hora, o que causava engasgos ao
+entrar em areas novas. Sem o Pillow, os arquivos sao copiados como estao.
+
 Uso:  python3 ds2tex.py /caminho/do/Dead Space 2/texmod
       (sem argumento: usa ../texmod relativo a este script)
 """
@@ -73,6 +78,88 @@ def check_other(ext, data):
     if ext in ('tga', 'jpg', 'jpeg'):
         return ext, None
     return ext, None
+
+
+# ---------------------------------------------------------------- otimizacao (opcional, Pillow)
+
+def _dds_header(w, h, mips, fourcc, linear):
+    hd = [0] * 31
+    hd[0], hd[2], hd[3], hd[18], hd[26] = 124, h, w, 32, 0x1000
+    if mips > 1:
+        hd[1] |= 0x20000
+        hd[6] = mips
+        hd[26] |= 0x400008
+    if fourcc:
+        hd[1] |= 0x81007
+        hd[4], hd[19], hd[20] = linear, 4, struct.unpack('<I', fourcc)[0]
+    else:
+        hd[1] |= 0x100F
+        hd[4], hd[19], hd[21] = w * 4, 0x41, 32
+        hd[22], hd[23], hd[24], hd[25] = 0x00FF0000, 0x0000FF00, 0x000000FF, 0xFF000000
+    return b'DDS ' + struct.pack('<31I', *hd)
+
+
+def _mips_below(Image, img, binary_alpha):
+    out, cur = [], img
+    while max(cur.size) > 1:
+        cur = cur.resize((max(1, cur.size[0] // 2), max(1, cur.size[1] // 2)), Image.BOX)
+        if binary_alpha:
+            r, g, b, a = cur.split()
+            cur = Image.merge('RGBA', (r, g, b, a.point(lambda v: 255 if v >= 128 else 0)))
+        out.append(cur)
+    return out
+
+
+def _encode_level(Image, img, fourcc):
+    import io
+    if not fourcc:
+        r, g, b, a = img.split()
+        return Image.merge('RGBA', (b, g, r, a)).tobytes()
+    w, h = img.size
+    if w % 4 or h % 4:
+        pad = Image.new('RGBA', ((w + 3) // 4 * 4, (h + 3) // 4 * 4))
+        pad.paste(img, (0, 0))
+        img = pad
+    buf = io.BytesIO()
+    img.save(buf, 'DDS', pixel_format=fourcc.decode())
+    return buf.getvalue()[128:]
+
+
+def optimize(path):
+    """Deixa a textura pronta para o jogo. Retorna (novo_caminho, descricao) ou None se nada mudou."""
+    from PIL import Image
+    ext = path.rsplit('.', 1)[-1].lower()
+    if ext in ('png', 'bmp', 'tga', 'jpg', 'jpeg'):
+        img = Image.open(path).convert('RGBA')
+        levels = [img] + _mips_below(Image, img, False)
+        data = _dds_header(img.size[0], img.size[1], len(levels), None, 0) + \
+            b''.join(_encode_level(Image, lv, None) for lv in levels)
+        new = path.rsplit('.', 1)[0] + '.dds'
+    elif ext == 'dds':
+        raw = open(path, 'rb').read()
+        h = struct.unpack('<31I', raw[4:128])
+        hgt, wid, mips, pf_flags, fourcc, caps2 = h[2], h[3], h[6], h[19], struct.pack('<I', h[20]), h[27]
+        if mips > 1 or caps2 & 0x200 or max(wid, hgt) <= 1:
+            return None
+        if pf_flags & 4 and fourcc in (b'DXT1', b'DXT5'):
+            fc, top = fourcc, max(1, (wid + 3) // 4) * max(1, (hgt + 3) // 4) * (8 if fourcc == b'DXT1' else 16)
+        elif not pf_flags & 4 and h[21] == 32 and h[22] == 0x00FF0000:
+            fc, top = None, wid * hgt * 4
+        else:
+            return None  # formato que o plugin trata sozinho
+        img = Image.open(path).convert('RGBA')
+        levels = _mips_below(Image, img, fc == b'DXT1')
+        data = _dds_header(wid, hgt, len(levels) + 1, fc, top if fc else 0) + raw[128:128 + top] + \
+            b''.join(_encode_level(Image, lv, fc) for lv in levels)
+        new = path
+    else:
+        return None
+    with open(new + '.tmp', 'wb') as f:
+        f.write(data)
+    os.replace(new + '.tmp', new)
+    if new != path:
+        os.remove(path)
+    return new, check_dds(data)[0]
 
 
 def main():
@@ -154,6 +241,29 @@ def main():
                 index[h] = (pack, fn, desc, len(data))
                 n_ok += 1
             print('   %d texturas' % n_ok, flush=True)
+
+    try:
+        import PIL  # noqa: F401
+        have_pil = True
+    except ImportError:
+        have_pil = False
+        print('\n(Pillow nao instalado: texturas copiadas como estao. Para evitar engasgos: sudo pacman -S python-pillow)')
+    if have_pil:
+        print('\nPreparando texturas (mipmaps e conversao de PNG para DDS)...', flush=True)
+        n_opt = 0
+        for i, h in enumerate(sorted(index)):
+            p, fn, d, sz = index[h]
+            ext = fn.rsplit('.', 1)[-1].lower()
+            try:
+                r = optimize(os.path.join(cache, '0x%08X.%s' % (h, ext)))
+            except Exception as e:
+                problems.append('%s: %s (0x%08X): nao deu para otimizar: %s' % (p, fn, h, e)); continue
+            if r:
+                index[h] = (p, fn, r[1], os.path.getsize(r[0]))
+                n_opt += 1
+            if (i + 1) % 500 == 0:
+                print('   %d/%d' % (i + 1, len(index)), flush=True)
+        print('   %d texturas preparadas' % n_opt)
 
     with open(os.path.join(cache, 'index.txt'), 'w') as f:
         f.write('# hash | pacote | arquivo original | formato | bytes\n')
