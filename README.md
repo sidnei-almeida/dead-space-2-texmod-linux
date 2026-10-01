@@ -1,132 +1,218 @@
-# DS2TexInject — TexMod texture packs for Dead Space 2 on Linux
+# DS2TexInject
 
-Load TexMod/uMod `.tpf` texture packs in **Dead Space 2 on Linux** (Steam + Proton/GE-Proton, DXVK, ReShade, Steam Deck).
+**Use TexMod texture packs (`.tpf`) in Dead Space 2 on Linux.**
 
-TexMod, uMod and gMod don't work under Proton. DS2TexInject is a small `.asi` plugin that does the same job from inside the game. It uses the same texture hashes, so existing `.tpf` packs work without changes.
+Works with Steam + Proton / GE-Proton, DXVK, ReShade and Steam Deck.
 
-> 🇧🇷 **Português** mais abaixo — [ir para a versão em português](#português).
+🇧🇷 **[Leia em português →](README.pt-BR.md)**
 
 ---
 
-## Why TexMod/uMod don't work on Linux
+## What is this?
 
-- **TexMod and uMod** inject their DLL through Windows global hooks and launcher tricks that Wine doesn't reproduce.
-- **They also need to be `d3d9.dll`.** That slot is already taken by ReShade, and below it by DXVK.
-- **Dead Space 2's `.exe` is wrapped by EA's DRM.** Its import table is only built at runtime, which breaks most hooking approaches.
+Dead Space 2 has great HD texture mods: 4K suits, weapons, and more. They come as `.tpf` files made for **TexMod** or **uMod**.
 
-## How DS2TexInject works
+**TexMod and uMod don't work on Linux.** DS2TexInject replaces them. It is a small plugin that runs inside the game, finds the textures your packs replace, and swaps them in. Your existing `.tpf` files work as they are.
 
-1. The `.asi` is loaded by [MarkerPatch](https://github.com/Wemino/MarkerPatch) (`dinput8.dll`) through its built-in ASI loader. [Ultimate ASI Loader](https://github.com/ThirteenAG/Ultimate-ASI-Loader) also works.
-2. It puts an inline hook on `Direct3DCreate9`, on whatever `d3d9.dll` the game loads (ReShade or DXVK). From there it hooks the `IDirect3DDevice9` and `IDirect3DTexture9` vtables.
-3. Every texture the game uploads gets the **TexMod CRC32 hash** of its top mip level. TexMod's CRC is reflected, `0xEDB88320`, init `0xFFFFFFFF`, with no final XOR.
-4. If `texmod/_cache/0xHASH.(dds|png|bmp)` exists, it is loaded and swapped in at `SetTexture`. Replacements are loaded lazily and freed when the original texture is released.
+---
 
-`ds2tex.py` unpacks `.tpf` files offline. A `.tpf` is a zip XOR-ed with `0x3FA4` and protected with TexMod's fixed ZipCrypto password. The script validates every texture (DDS header, truncation, unsupported DX10 formats) and writes them to `texmod/_cache/`.
+## Quick start
 
-## Requirements
+| Step | What to do |
+|:---:|---|
+| 1 | Install **MarkerPatch** into the game folder. |
+| 2 | Add a **Steam launch option**. |
+| 3 | Put your **`.tpf` packs** in a `texmod` folder. |
+| 4 | Run **`./install.sh`** from this repo. |
+| 5 | **Play.** Press **F10** to compare before and after. |
 
-- Dead Space 2 (Steam), running with Proton/GE-Proton.
-- [MarkerPatch](https://github.com/Wemino/MarkerPatch) installed, with `LoadASIPlugins = 1` in `MarkerPatch.ini` (that's the default).
-  - Windows DLLs placed in the game folder need the launch option `WINEDLLOVERRIDES="dinput8=n,b" %command%`. If you also use ReShade, use `WINEDLLOVERRIDES="d3d9,dinput8=n,b" %command%`.
-- `python3` and `unzip`. Both are already installed on almost every distro.
-- Building from source needs a mingw compiler. `build.sh` downloads [llvm-mingw](https://github.com/mstorsjo/llvm-mingw) to `~/.local/opt` automatically, so no sudo is needed. You can also install `mingw-w64-gcc`.
+Each step is explained in detail below.
 
-## Install
+---
+
+## Step 1 — Install MarkerPatch
+
+[MarkerPatch](https://github.com/Wemino/MarkerPatch) is a fix pack for Dead Space 2. DS2TexInject needs it because MarkerPatch is what loads the plugin.
+
+1. Download the latest release from **https://github.com/Wemino/MarkerPatch/releases**.
+2. Extract it into the game folder, next to `deadspace2.exe`. You should end up with `dinput8.dll` and `MarkerPatch.ini` there.
+
+> **Where is the game folder?** In Steam, right-click **Dead Space 2** → **Manage** → **Browse local files**.
+> It is usually `~/.local/share/Steam/steamapps/common/Dead Space 2`.
+
+## Step 2 — Add the Steam launch option
+
+Proton ignores DLLs placed in the game folder unless you tell it to load them.
+
+1. In Steam, right-click **Dead Space 2** → **Properties** → **General**.
+2. Paste one of these into **Launch Options**:
+
+**Without ReShade:**
+```
+WINEDLLOVERRIDES="dinput8=n,b" %command%
+```
+
+**With ReShade** (your game folder has a `d3d9.dll`):
+```
+WINEDLLOVERRIDES="d3d9,dinput8=n,b" %command%
+```
+
+## Step 3 — Get the texture packs
+
+The texture packs are **not included** in this repository. They belong to their authors, so download them from the original pages.
+
+These packs were tested and work:
+
+| Pack | Files |
+|---|---|
+| [2K-4K Isaac Suits and Face](https://www.nexusmods.com/deadspace2/mods/82) | `1-4KMainSuitsnew.tpf`, `2Kaio.tpf` |
+| [Return to Titan](https://www.nexusmods.com/deadspace2/mods/97) ([texture pack](https://www.nexusmods.com/deadspace2/mods/40)) | `1WEP_RTTn.tpf`, `3…9INTERACTABLES_RTT*.tpf` |
+
+Any other Dead Space 2 `.tpf` pack should work too.
+
+Create a folder named **`texmod`** inside the game folder and put all the `.tpf` files there:
+
+```
+Dead Space 2/
+├── deadspace2.exe
+├── dinput8.dll            ← MarkerPatch
+└── texmod/
+    ├── 1-4KMainSuitsnew.tpf
+    ├── 2Kaio.tpf
+    └── ...
+```
+
+## Step 4 — Install DS2TexInject
+
+Open a terminal and run:
 
 ```sh
 git clone https://github.com/sidnei-almeida/ds2-texinject-linux
 cd ds2-texinject-linux
-# put your .tpf packs in "<Dead Space 2>/texmod/"
-./install.sh                         # auto-detects the Steam library
-# or: ./install.sh "/path/to/Dead Space 2"
+./install.sh
 ```
 
-`install.sh` does four things:
+The installer does everything for you:
 
-- builds the plugin (or uses `dist/DS2TexInject.asi`, which you can also get from the Releases page),
-- copies it to `<game>/plugins/`,
-- creates `DS2TexInject.ini`,
-- unpacks the packs into `<game>/texmod/_cache/`.
+- finds the Dead Space 2 folder in your Steam libraries,
+- compiles the plugin (the first time, it downloads a compiler; no `sudo` needed),
+- copies the plugin to `Dead Space 2/plugins/`,
+- unpacks and checks every texture in your `.tpf` packs.
 
-After that, launch the game from Steam as usual.
+If the game folder isn't found automatically, give it the path:
 
-**Adding or removing packs:** put the `.tpf` files in `<game>/texmod/` and run `python3 ds2tex.py "<game>/texmod"` again.
+```sh
+./install.sh "/path/to/Dead Space 2"
+```
 
-**Pack priority:** when two packs replace the same texture, the one that comes first alphabetically wins. To change that, create `texmod/load_order.txt` with one pack filename per line.
+At the end you should see:
 
-## In-game
+```
+396 texturas unicas (665 MB) em .../texmod/_cache
+Nenhuma textura quebrada encontrada.
+```
 
-- **F10** toggles replacements on and off, so you can compare before and after.
-- **Log:** `<game>/DS2TexInject.log`. Lines that start with `MATCH` are textures being replaced.
+The installer's messages are in Portuguese. The last line means *"No broken textures found."*
 
-### `DS2TexInject.ini`
+<details>
+<summary><b>Manual install (no compiling)</b></summary>
 
-| Key | Default | Meaning |
+1. Download `DS2TexInject.asi` and `DS2TexInject.ini` from the [Releases page](https://github.com/sidnei-almeida/ds2-texinject-linux/releases).
+2. Put `DS2TexInject.asi` in `Dead Space 2/plugins/`. Create the `plugins` folder if it doesn't exist.
+3. Put `DS2TexInject.ini` in `Dead Space 2/`.
+4. Unpack your textures:
+   ```sh
+   python3 ds2tex.py "/path/to/Dead Space 2/texmod"
+   ```
+</details>
+
+## Step 5 — Play
+
+Launch Dead Space 2 from Steam as usual.
+
+- Press **F10** in-game to turn the new textures **on and off**, so you can see the difference.
+- To check that it is working, open `Dead Space 2/DS2TexInject.log`. Each `MATCH` line is a texture being replaced.
+
+Textures are swapped as they appear on screen. Suits and weapons show up once you get them in the game.
+
+---
+
+## Adding or removing packs
+
+1. Add or delete `.tpf` files in `Dead Space 2/texmod/`.
+2. Run this again:
+   ```sh
+   python3 ds2tex.py "/path/to/Dead Space 2/texmod"
+   ```
+
+**When two packs change the same texture,** the pack whose name comes first alphabetically wins. To choose the order yourself, create `texmod/load_order.txt` with one file name per line, most important first.
+
+## Settings — `DS2TexInject.ini`
+
+The file is in the game folder. You can open it with any text editor.
+
+| Setting | Default | What it does |
 |---|---|---|
-| `Enabled` | `1` | Turns texture replacement on or off. |
-| `TextureDir` | `texmod\_cache` | Folder with the `0xHASH.*` files. |
-| `Pool` | `managed` | `default` uses less RAM, which helps the 32-bit game with many 4K packs. |
-| `ToggleKey` | `0x79` | Virtual-key code for the toggle key (`0x79` is F10). |
-| `LogHashes` | `0` | Logs every texture hash the game loads. |
-| `DumpTextures` | `0` | Saves the game's original textures as `texmod\_dump\0xHASH.dds`, so you can make your own packs. |
+| `Enabled` | `1` | `0` turns texture replacement off. |
+| `ToggleKey` | `0x79` | Key that turns the textures on and off. `0x79` is **F10**. |
+| `Pool` | `managed` | Change to `default` if the game crashes with many 4K packs. It uses less memory. |
+| `LogHashes` | `0` | `1` logs every texture the game loads. Useful for debugging. |
+| `DumpTextures` | `0` | `1` saves the game's original textures to `texmod/_dump/`. Useful for making your own packs. |
+| `TextureDir` | `texmod\_cache` | Where the unpacked textures are. |
 
-## Tested with
-
-Thanks to the texture authors. Download the packs from their pages:
-
-- [2K-4K Isaac Suits and Face](https://www.nexusmods.com/deadspace2/mods/82): `1-4KMainSuitsnew.tpf`, `2Kaio.tpf`
-- [Return to Titan](https://www.nexusmods.com/deadspace2/mods/97) / [Return To Titan Texture Pack](https://www.nexusmods.com/deadspace2/mods/40): `1WEP_RTTn.tpf`, `*INTERACTABLES_RTT*.tpf`
-
-Tested setup: GE-Proton 11, DXVK, ReShade 6.8, MarkerPatch. 396 textures were validated and replaced in-game.
+---
 
 ## Troubleshooting
 
-| Symptom | Fix |
+| Problem | Solution |
 |---|---|
-| No `DS2TexInject.log` file | The ASI loader isn't running. Check that MarkerPatch's `dinput8.dll` is in the game folder and that `WINEDLLOVERRIDES` includes `dinput8=n,b`. |
-| The log says `ERRO` around `Direct3DCreate9` | Open an issue and attach the log. |
-| The log has no `MATCH` lines | Set `LogHashes=1` and compare the hashes in the log with `texmod/_cache/index.txt`. |
-| The game crashes after a while with many 4K packs | 32-bit memory limit. Set `Pool=default`, or remove some 4K packs. |
-
-## Building
-
-```sh
-./build.sh          # -> dist/DS2TexInject.asi
-```
-
-All the code is in one file: `src/ds2texinject.cpp`.
+| **No `DS2TexInject.log` file appears** | The plugin isn't loading. Check that `dinput8.dll` (MarkerPatch) is in the game folder, that `plugins/DS2TexInject.asi` exists, and that the launch option from Step 2 is set. |
+| **The log has no `MATCH` lines** | Make sure you ran `ds2tex.py` and that `texmod/_cache/` has files in it. Also play a bit: suits and weapons only appear later in the game. |
+| **The game crashes after playing a while** | Dead Space 2 is a 32-bit game and can run out of memory with many 4K textures. Set `Pool=default` in `DS2TexInject.ini`, or remove some packs. |
+| **A texture looks wrong** | Press **F10** to confirm the pack causes it, then open an issue and say which pack it is. |
+| **Something else** | [Open an issue](https://github.com/sidnei-almeida/ds2-texinject-linux/issues) and attach `DS2TexInject.log`. |
 
 ---
 
-## Português
+## How it works
 
-O **DS2TexInject** faz os pacotes de textura `.tpf` do TexMod/uMod funcionarem no **Dead Space 2 no Linux** (Steam + Proton/GE-Proton, DXVK, ReShade, Steam Deck). O TexMod, o uMod e o gMod não funcionam no Proton. Este plugin `.asi` faz a mesma coisa de dentro do jogo e usa os mesmos hashes, então os `.tpf` que você já tem funcionam sem alteração.
+You don't need this section to use the mod.
 
-### Requisitos
+**Why TexMod doesn't work on Linux:**
 
-- **[MarkerPatch](https://github.com/Wemino/MarkerPatch)** instalado, com `LoadASIPlugins = 1` (já é o padrão).
-- **Opção de inicialização no Steam:** `WINEDLLOVERRIDES="dinput8=n,b" %command%`. Se também usar ReShade: `WINEDLLOVERRIDES="d3d9,dinput8=n,b" %command%`.
-- **`python3` e `unzip`.**
+- TexMod and uMod inject themselves using Windows tricks that Wine doesn't support.
+- They also need to replace `d3d9.dll`, a slot that ReShade and DXVK already use.
+- The game's `.exe` is also wrapped in EA's DRM.
 
-### Instalação
+**What DS2TexInject does instead:**
+
+1. MarkerPatch loads `DS2TexInject.asi` when the game starts.
+2. The plugin hooks `Direct3DCreate9` inside whichever `d3d9.dll` the game uses (ReShade or DXVK). From there it hooks the Direct3D 9 device and texture methods.
+3. When the game uploads a texture, the plugin computes the same **CRC32 hash TexMod uses** (on the top mip level).
+4. If `texmod/_cache/0x<hash>.dds` (or `.png` / `.bmp`) exists, the plugin loads it and draws it instead of the original. Replacements are loaded only when needed and freed when the game stops using them.
+
+**What `ds2tex.py` does:**
+
+A `.tpf` file is a zip archive, XOR-encoded and protected with TexMod's fixed password. `ds2tex.py` decodes it, checks every texture (format, size, damaged files), and writes them to `texmod/_cache/` named by hash.
+
+**Building yourself:**
 
 ```sh
-git clone https://github.com/sidnei-almeida/ds2-texinject-linux
-cd ds2-texinject-linux
-# coloque seus .tpf em "<Dead Space 2>/texmod/"
-./install.sh          # detecta a pasta do jogo sozinho
+./build.sh      # creates dist/DS2TexInject.asi
 ```
 
-Depois é só abrir o jogo pelo Steam.
+It uses `i686-w64-mingw32-g++` if installed. If not, it downloads [llvm-mingw](https://github.com/mstorsjo/llvm-mingw) into `~/.local/opt`. All the code is in `src/ds2texinject.cpp`.
 
-- **F10:** liga e desliga as texturas novas.
-- **Log:** `DS2TexInject.log`, na pasta do jogo. As linhas `MATCH` são as texturas trocadas.
-- **Adicionou ou removeu um `.tpf`?** Rode `python3 ds2tex.py "<jogo>/texmod"` de novo.
-- **Prioridade entre pacotes:** quando dois pacotes trocam a mesma textura, vale o primeiro em ordem alfabética. Para mudar, crie `texmod/load_order.txt` com um nome de pacote por linha.
-- **O jogo trava depois de um tempo com muitos pacotes 4K?** Use `Pool=default` no `DS2TexInject.ini`.
+---
 
-As texturas **não** vêm neste repositório. Baixe os pacotes nas páginas dos autores (links em [Tested with](#tested-with)).
+## Credits
+
+- **Texture packs:** their respective authors on [Nexus Mods](https://www.nexusmods.com/deadspace2).
+- **[MarkerPatch](https://github.com/Wemino/MarkerPatch)** by Wemino, which loads the plugin.
+- Hash compatibility follows the behavior of **TexMod** and **[uMod](https://code.google.com/archive/p/texmod/)**.
+
+**Tested on:** Arch Linux, GE-Proton 11, DXVK, ReShade 6.8, MarkerPatch.
 
 ## License
 
-MIT. See [LICENSE](LICENSE). The texture packs belong to their respective authors and are not included.
+[MIT](LICENSE). The texture packs are not part of this project and belong to their authors.
