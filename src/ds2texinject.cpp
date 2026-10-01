@@ -21,7 +21,7 @@
 #include <unordered_set>
 #include <vector>
 
-#define DS2TI_VERSION "1.1.0"
+#define DS2TI_VERSION "1.2.0"
 
 // ---------------------------------------------------------------- config/log
 
@@ -248,8 +248,199 @@ static bool FillLevels(IDirect3DTexture9 *t, D3DFORMAT fmt, UINT w, UINT h, UINT
     return true;
 }
 
+
+// ---------------------------------------------------------------- mipmaps
+// Muitos pacotes trazem DDS sem mipmaps: de longe a textura cintila e serrilha.
+// Aqui geramos a cadeia completa (decodifica DXT -> reduz 2x2 -> recodifica DXT).
+
+struct RGBA8 { uint8_t r, g, b, a; };
+
+static void Unpack565(uint16_t c, uint8_t &r, uint8_t &g, uint8_t &b)
+{
+    r = (uint8_t)(((c >> 11) & 31) * 255 / 31);
+    g = (uint8_t)(((c >> 5) & 63) * 255 / 63);
+    b = (uint8_t)((c & 31) * 255 / 31);
+}
+static uint16_t Pack565(int r, int g, int b)
+{
+    return (uint16_t)(((r * 31 + 127) / 255) << 11 | ((g * 63 + 127) / 255) << 5 | ((b * 31 + 127) / 255));
+}
+
+static void DecodeColorBlock(const uint8_t *blk, RGBA8 px[16], bool dxt1)
+{
+    uint16_t c0 = blk[0] | blk[1] << 8, c1 = blk[2] | blk[3] << 8;
+    RGBA8 pal[4];
+    Unpack565(c0, pal[0].r, pal[0].g, pal[0].b);
+    Unpack565(c1, pal[1].r, pal[1].g, pal[1].b);
+    pal[0].a = pal[1].a = 255;
+    if (c0 > c1 || !dxt1) {
+        pal[2] = {(uint8_t)((2 * pal[0].r + pal[1].r) / 3), (uint8_t)((2 * pal[0].g + pal[1].g) / 3), (uint8_t)((2 * pal[0].b + pal[1].b) / 3), 255};
+        pal[3] = {(uint8_t)((pal[0].r + 2 * pal[1].r) / 3), (uint8_t)((pal[0].g + 2 * pal[1].g) / 3), (uint8_t)((pal[0].b + 2 * pal[1].b) / 3), 255};
+    } else {
+        pal[2] = {(uint8_t)((pal[0].r + pal[1].r) / 2), (uint8_t)((pal[0].g + pal[1].g) / 2), (uint8_t)((pal[0].b + pal[1].b) / 2), 255};
+        pal[3] = {0, 0, 0, 0};
+    }
+    uint32_t idx = blk[4] | blk[5] << 8 | blk[6] << 16 | (uint32_t)blk[7] << 24;
+    for (int i = 0; i < 16; i++) px[i] = pal[(idx >> (2 * i)) & 3];
+}
+
+static void DecodeDXT5Alpha(const uint8_t *blk, RGBA8 px[16])
+{
+    uint8_t a[8] = {blk[0], blk[1]};
+    if (a[0] > a[1]) for (int i = 1; i < 7; i++) a[i + 1] = (uint8_t)(((7 - i) * a[0] + i * a[1]) / 7);
+    else { for (int i = 1; i < 5; i++) a[i + 1] = (uint8_t)(((5 - i) * a[0] + i * a[1]) / 5); a[6] = 0; a[7] = 255; }
+    uint64_t bits = 0;
+    for (int i = 0; i < 6; i++) bits |= (uint64_t)blk[2 + i] << (8 * i);
+    for (int i = 0; i < 16; i++) px[i].a = a[(bits >> (3 * i)) & 7];
+}
+
+static bool DecodeImage(D3DFORMAT fmt, const uint8_t *src, UINT w, UINT h, std::vector<RGBA8> &img)
+{
+    img.assign((size_t)w * h, RGBA8{0, 0, 0, 255});
+    if (fmt == D3DFMT_A8R8G8B8 || fmt == D3DFMT_X8R8G8B8) {
+        for (size_t i = 0; i < (size_t)w * h; i++)
+            img[i] = {src[i * 4 + 2], src[i * 4 + 1], src[i * 4], fmt == D3DFMT_A8R8G8B8 ? src[i * 4 + 3] : (uint8_t)255};
+        return true;
+    }
+    if (fmt != D3DFMT_DXT1 && fmt != D3DFMT_DXT3 && fmt != D3DFMT_DXT5) return false;
+    UINT bw = (w + 3) / 4, bh = (h + 3) / 4, bsz = fmt == D3DFMT_DXT1 ? 8 : 16;
+    for (UINT by = 0; by < bh; by++)
+        for (UINT bx = 0; bx < bw; bx++) {
+            const uint8_t *blk = src + ((size_t)by * bw + bx) * bsz;
+            RGBA8 px[16];
+            DecodeColorBlock(fmt == D3DFMT_DXT1 ? blk : blk + 8, px, fmt == D3DFMT_DXT1);
+            if (fmt == D3DFMT_DXT3)
+                for (int i = 0; i < 16; i++) { int v = (blk[i / 2] >> (4 * (i & 1))) & 15; px[i].a = (uint8_t)(v * 17); }
+            else if (fmt == D3DFMT_DXT5) DecodeDXT5Alpha(blk, px);
+            for (int i = 0; i < 16; i++) {
+                UINT x = bx * 4 + (i & 3), y = by * 4 + (i >> 2);
+                if (x < w && y < h) img[(size_t)y * w + x] = px[i];
+            }
+        }
+    return true;
+}
+
+static void Downsample(const std::vector<RGBA8> &src, UINT w, UINT h, std::vector<RGBA8> &dst, UINT &nw, UINT &nh)
+{
+    nw = w > 1 ? w / 2 : 1; nh = h > 1 ? h / 2 : 1;
+    dst.resize((size_t)nw * nh);
+    for (UINT y = 0; y < nh; y++)
+        for (UINT x = 0; x < nw; x++) {
+            UINT x0 = x * 2 < w ? x * 2 : w - 1, x1 = x * 2 + 1 < w ? x * 2 + 1 : x0;
+            UINT y0 = y * 2 < h ? y * 2 : h - 1, y1 = y * 2 + 1 < h ? y * 2 + 1 : y0;
+            const RGBA8 &a = src[(size_t)y0 * w + x0], &b = src[(size_t)y0 * w + x1], &c = src[(size_t)y1 * w + x0], &d = src[(size_t)y1 * w + x1];
+            dst[(size_t)y * nw + x] = {(uint8_t)((a.r + b.r + c.r + d.r + 2) / 4), (uint8_t)((a.g + b.g + c.g + d.g + 2) / 4),
+                                       (uint8_t)((a.b + b.b + c.b + d.b + 2) / 4), (uint8_t)((a.a + b.a + c.a + d.a + 2) / 4)};
+        }
+}
+
+static void EncodeColorBlock(const RGBA8 px[16], uint8_t *out, bool punchAlpha)
+{
+    int mn[3] = {255, 255, 255}, mx[3] = {0, 0, 0};
+    bool anyTransparent = false;
+    for (int i = 0; i < 16; i++) {
+        if (punchAlpha && px[i].a < 128) { anyTransparent = true; continue; }
+        const uint8_t c[3] = {px[i].r, px[i].g, px[i].b};
+        for (int k = 0; k < 3; k++) { if (c[k] < mn[k]) mn[k] = c[k]; if (c[k] > mx[k]) mx[k] = c[k]; }
+    }
+    if (mn[0] > mx[0]) { mn[0] = mn[1] = mn[2] = mx[0] = mx[1] = mx[2] = 0; }
+    for (int k = 0; k < 3; k++) { int inset = (mx[k] - mn[k]) / 16; mn[k] += inset; mx[k] -= inset; }
+    uint16_t c0 = Pack565(mx[0], mx[1], mx[2]), c1 = Pack565(mn[0], mn[1], mn[2]);
+    bool threeColor = anyTransparent;
+    if (threeColor ? c0 > c1 : c0 < c1) { uint16_t t = c0; c0 = c1; c1 = t; }
+    out[0] = c0 & 0xFF; out[1] = c0 >> 8; out[2] = c1 & 0xFF; out[3] = c1 >> 8;
+    // paleta real dos endpoints: indices 0,1,2,3 nos 4 primeiros pixels
+    RGBA8 pal[16], p[4];
+    uint8_t tmp[8] = {out[0], out[1], out[2], out[3], 0xE4, 0, 0, 0};
+    DecodeColorBlock(tmp, pal, true);
+    for (int i = 0; i < 4; i++) p[i] = pal[i];
+    uint32_t idx = 0;
+    for (int i = 0; i < 16; i++) {
+        int best = 0, bestD = 1 << 30;
+        if (threeColor && px[i].a < 128) best = 3;
+        else
+            for (int j = 0; j < (threeColor ? 3 : 4); j++) {
+                int dr = px[i].r - p[j].r, dg = px[i].g - p[j].g, db = px[i].b - p[j].b, d = dr * dr + dg * dg + db * db;
+                if (d < bestD) { bestD = d; best = j; }
+            }
+        idx |= (uint32_t)best << (2 * i);
+    }
+    out[4] = idx & 0xFF; out[5] = (idx >> 8) & 0xFF; out[6] = (idx >> 16) & 0xFF; out[7] = idx >> 24;
+}
+
+static void EncodeDXT5Alpha(const RGBA8 px[16], uint8_t *out)
+{
+    int mn = 255, mx = 0;
+    for (int i = 0; i < 16; i++) { if (px[i].a < mn) mn = px[i].a; if (px[i].a > mx) mx = px[i].a; }
+    out[0] = (uint8_t)mx; out[1] = (uint8_t)mn;
+    uint8_t a[8] = {(uint8_t)mx, (uint8_t)mn};
+    if (mx > mn) for (int i = 1; i < 7; i++) a[i + 1] = (uint8_t)(((7 - i) * mx + i * mn) / 7);
+    else for (int i = 2; i < 8; i++) a[i] = (uint8_t)mx;
+    uint64_t bits = 0;
+    for (int i = 0; i < 16; i++) {
+        int best = 0, bestD = 1 << 30;
+        for (int j = 0; j < 8; j++) { int d = abs(px[i].a - a[j]); if (d < bestD) { bestD = d; best = j; } }
+        bits |= (uint64_t)best << (3 * i);
+    }
+    for (int i = 0; i < 6; i++) out[2 + i] = (uint8_t)(bits >> (8 * i));
+}
+
+static void EncodeImage(D3DFORMAT fmt, const std::vector<RGBA8> &img, UINT w, UINT h, std::vector<uint8_t> &out)
+{
+    if (fmt == D3DFMT_A8R8G8B8 || fmt == D3DFMT_X8R8G8B8) {
+        for (auto &c : img) { out.push_back(c.b); out.push_back(c.g); out.push_back(c.r); out.push_back(c.a); }
+        return;
+    }
+    UINT bw = (w + 3) / 4, bh = (h + 3) / 4;
+    for (UINT by = 0; by < bh; by++)
+        for (UINT bx = 0; bx < bw; bx++) {
+            RGBA8 px[16];
+            for (int i = 0; i < 16; i++) {
+                UINT x = bx * 4 + (i & 3), y = by * 4 + (i >> 2);
+                px[i] = img[(size_t)(y < h ? y : h - 1) * w + (x < w ? x : w - 1)];
+            }
+            uint8_t blk[16] = {};
+            if (fmt == D3DFMT_DXT1) { EncodeColorBlock(px, blk, true); out.insert(out.end(), blk, blk + 8); continue; }
+            if (fmt == D3DFMT_DXT3)
+                for (int i = 0; i < 16; i++) blk[i / 2] |= (uint8_t)(((px[i].a + 8) / 17) << (4 * (i & 1)));
+            else EncodeDXT5Alpha(px, blk);
+            EncodeColorBlock(px, blk + 8, false);
+            out.insert(out.end(), blk, blk + 16);
+        }
+}
+
+// Gera mips 1..n a partir do nivel 0 e salva o DDS corrigido no lugar (so roda uma vez por arquivo).
+static bool AddMipmaps(std::vector<uint8_t> &dds, D3DFORMAT fmt, UINT w, UINT h, UINT maxm, const std::wstring &path)
+{
+    std::vector<RGBA8> img, next;
+    if (!DecodeImage(fmt, dds.data() + 128, w, h, img)) return false;
+    bool block = IsBlockFormat(fmt);
+    size_t level0 = block ? (size_t)((w + 3) / 4) * ((h + 3) / 4) * (fmt == D3DFMT_DXT1 ? 8 : 16) : (size_t)w * h * 4;
+    dds.resize(128 + level0);
+    UINT lw = w, lh = h;
+    for (UINT l = 1; l < maxm; l++) {
+        UINT nw, nh;
+        Downsample(img, lw, lh, next, nw, nh);
+        EncodeImage(fmt, next, nw, nh, dds);
+        img.swap(next); lw = nw; lh = nh;
+    }
+    DWORD *hd = (DWORD *)(dds.data() + 4);
+    hd[1] |= 0x20000;            // DDSD_MIPMAPCOUNT
+    hd[6] = maxm;
+    hd[26] |= 0x400008;          // DDSCAPS_COMPLEX | DDSCAPS_MIPMAP
+    std::wstring tmp = path + L".tmp";
+    HANDLE f = CreateFileW(tmp.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, 0, nullptr);
+    if (f != INVALID_HANDLE_VALUE) {
+        DWORD wr = 0;
+        BOOL ok = WriteFile(f, dds.data(), (DWORD)dds.size(), &wr, nullptr) && wr == dds.size();
+        CloseHandle(f);
+        if (!ok || !MoveFileExW(tmp.c_str(), path.c_str(), MOVEFILE_REPLACE_EXISTING)) DeleteFileW(tmp.c_str());
+    }
+    return true;
+}
+
 // Loader DDS proprio (DXT1-5/ATI1/ATI2/32bpp) - nao depende do d3dx9 do Wine.
-static IDirect3DTexture9 *LoadDDS(IDirect3DDevice9 *dev, const std::vector<uint8_t> &d)
+static IDirect3DTexture9 *LoadDDS(IDirect3DDevice9 *dev, std::vector<uint8_t> &d, const std::wstring &path)
 {
     if (d.size() < 128 || memcmp(d.data(), "DDS ", 4)) return nullptr;
     const DWORD *hd = (const DWORD *)(d.data() + 4);
@@ -266,6 +457,13 @@ static IDirect3DTexture9 *LoadDDS(IDirect3DDevice9 *dev, const std::vector<uint8
     // limita mips ao maximo possivel
     UINT maxm = 1; for (UINT s = w > h ? w : h; s > 1; s >>= 1) maxm++;
     if (mips > maxm) mips = maxm;
+    if (mips == 1 && maxm > 1) {
+        DWORD t0 = GetTickCount();
+        if (AddMipmaps(d, fmt, w, h, maxm, path)) {
+            mips = maxm;
+            Log("mipmaps gerados para %ls (%u niveis, %lu ms)", path.c_str() + path.rfind(L'\\') + 1, mips, GetTickCount() - t0);
+        }
+    }
 
     IDirect3DTexture9 *t = nullptr;
     if (g_pool == D3DPOOL_MANAGED) {
@@ -290,7 +488,7 @@ static IDirect3DTexture9 *LoadReplacementFile(IDirect3DDevice9 *dev, uint32_t ha
     IDirect3DTexture9 *t = nullptr;
     t_internal++;
     bool isDds = path.size() > 4 && _wcsicmp(path.c_str() + path.size() - 4, L".dds") == 0;
-    if (isDds) t = LoadDDS(dev, ReadFileAll(path));
+    if (isDds) { std::vector<uint8_t> data = ReadFileAll(path); t = LoadDDS(dev, data, path); }
     if (!t && p_D3DXCreateTextureFromFileExW) {
         // D3DX_FROM_FILE = 0xFFFFFFFD, D3DFMT_FROM_FILE = 0xFFFFFFFD, D3DX_DEFAULT = 0xFFFFFFFF, NONPOW2 = 0xFFFFFFFE
         HRESULT hr = p_D3DXCreateTextureFromFileExW(dev, path.c_str(), 0xFFFFFFFE, 0xFFFFFFFE,
