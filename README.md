@@ -1,4 +1,4 @@
-<p align="center"><img src="assets/banner.png" alt="Dead Space 2 TexMod for Linux" width="100%"></p>
+<p align="center"><img src="assets/dead-space-2-texmod-linux-banner.png" alt="Dead Space 2 TexMod for Linux" width="100%"></p>
 
 <h1 align="center">Dead Space 2 TexMod for Linux</h1>
 
