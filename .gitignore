@@ -1,0 +1,6 @@
+dist/
+*.tpf
+_cache/
+_dump/
+*.log
+__pycache__/
