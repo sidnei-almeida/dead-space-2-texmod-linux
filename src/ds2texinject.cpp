@@ -21,6 +21,8 @@
 #include <unordered_set>
 #include <vector>
 
+#define DS2TI_VERSION "1.1.0"
+
 // ---------------------------------------------------------------- config/log
 
 static wchar_t g_gameDir[MAX_PATH];
@@ -174,7 +176,10 @@ struct TexInfo {
     void *lockBits = nullptr; // LockRect(0) completo pendente
     INT lockPitch = 0;
     bool hasRep = false;      // existe arquivo para esse hash
+    int rehashes = 0;         // texturas que mudam sempre (video/UI) param de ser hasheadas
 };
+
+static const int kMaxRehash = 8;
 
 static SRWLOCK g_lock = SRWLOCK_INIT;
 static std::unordered_map<IDirect3DTexture9 *, TexInfo> g_tex;
@@ -299,28 +304,54 @@ static IDirect3DTexture9 *LoadReplacementFile(IDirect3DDevice9 *dev, uint32_t ha
 }
 
 // Garante que a substituicao do hash esta carregada. Chamado SEM g_lock.
+// Devolve o ponteiro com AddRef (quem chama solta com ReleaseInternal), assim
+// outra thread nao consegue destruir a textura enquanto ela esta sendo usada.
+static void ReleaseInternal(IDirect3DTexture9 *t)
+{
+    if (!t) return;
+    t_internal++; o_TexRelease(t); t_internal--;
+}
+
 static IDirect3DTexture9 *AcquireReplacement(IDirect3DDevice9 *dev, uint32_t hash)
 {
     std::wstring path;
     {
         WLock l;
-        auto &r = g_rep[hash];
-        if (r.tex || r.failed) return r.tex;
-        auto it = g_files.find(hash);
-        if (it == g_files.end()) { r.failed = true; return nullptr; }
-        path = it->second;
+        auto it = g_rep.find(hash);
+        if (it == g_rep.end() || it->second.users <= 0 || it->second.failed) return nullptr;
+        if (it->second.tex) { IDirect3DTexture9_AddRef(it->second.tex); return it->second.tex; }
+        auto f = g_files.find(hash);
+        if (f == g_files.end()) { it->second.failed = true; return nullptr; }
+        path = f->second;
     }
     DWORD t0 = GetTickCount();
     IDirect3DTexture9 *t = LoadReplacementFile(dev, hash, path);
-    WLock l;
-    auto &r = g_rep[hash];
-    if (r.tex) { if (t) o_TexRelease(t); return r.tex; } // outra thread carregou
-    if (!t) { r.failed = true; Log("FALHA ao carregar substituicao 0x%08X (%ls)", hash, path.c_str()); return nullptr; }
-    r.tex = t;
-    InterlockedIncrement(&g_statLoaded);
-    D3DSURFACE_DESC sd; IDirect3DTexture9_GetLevelDesc(t, 0, &sd);
-    Log("carregada 0x%08X  %ux%u fmt=0x%X  (%lu ms)", hash, sd.Width, sd.Height, (unsigned)sd.Format, GetTickCount() - t0);
-    return t;
+    IDirect3DTexture9 *extra = nullptr, *ret = nullptr;
+    {
+        WLock l;
+        auto it = g_rep.find(hash);
+        if (it == g_rep.end() || it->second.users <= 0) {
+            extra = t; // ninguem mais usa esse hash: descarta
+        } else if (it->second.tex) {
+            extra = t; // outra thread carregou primeiro
+            ret = it->second.tex;
+            IDirect3DTexture9_AddRef(ret);
+        } else if (!t) {
+            it->second.failed = true;
+        } else {
+            it->second.tex = t;
+            ret = t;
+            IDirect3DTexture9_AddRef(ret);
+        }
+    }
+    ReleaseInternal(extra);
+    if (!t) { Log("FALHA ao carregar substituicao 0x%08X (%ls)", hash, path.c_str()); return nullptr; }
+    if (ret == t) {
+        InterlockedIncrement(&g_statLoaded);
+        D3DSURFACE_DESC sd; IDirect3DTexture9_GetLevelDesc(t, 0, &sd);
+        Log("carregada 0x%08X  %ux%u fmt=0x%X  (%lu ms)", hash, sd.Width, sd.Height, (unsigned)sd.Format, GetTickCount() - t0);
+    }
+    return ret;
 }
 
 // ---------------------------------------------------------------- dump (para criar mods)
@@ -369,7 +400,8 @@ static uint32_t HashBits(const TexInfo &ti, const uint8_t *bits, INT pitch)
 
 static bool Hashable(const TexInfo &ti)
 {
-    return BitsPerPixel(ti.fmt) && !(ti.usage & (D3DUSAGE_RENDERTARGET | D3DUSAGE_DEPTHSTENCIL));
+    return BitsPerPixel(ti.fmt) && !(ti.usage & (D3DUSAGE_RENDERTARGET | D3DUSAGE_DEPTHSTENCIL)) &&
+           ti.rehashes < kMaxRehash;
 }
 
 // Registra o hash calculado e carrega a substituicao (se houver).
@@ -388,6 +420,7 @@ static void AssignHash(IDirect3DTexture9 *tex, uint32_t hash)
             if (r != g_rep.end() && --r->second.users <= 0) { drop = r->second.tex; g_rep.erase(r); }
         }
         bool same = ti.hashed && ti.hash == hash;
+        if (ti.hashed) ti.rehashes++;
         ti.hash = hash; ti.hashed = true; ti.dirty = false;
         if (!same) {
             ti.hasRep = g_files.count(hash) != 0;
@@ -396,14 +429,14 @@ static void AssignHash(IDirect3DTexture9 *tex, uint32_t hash)
         want = ti.hasRep && !same;
         copy = ti;
     }
-    if (drop) { t_internal++; o_TexRelease(drop); t_internal--; }
+    ReleaseInternal(drop);
     InterlockedIncrement(&g_statHashed);
     if (g_logHashes || want)
         Log("%s 0x%08X  %ux%u fmt=0x%X lv=%u pool=%d", want ? "MATCH" : "hash ", hash, copy.w, copy.h,
             (unsigned)copy.fmt, copy.levels, (int)copy.pool);
     if (want) {
         InterlockedIncrement(&g_statMatched);
-        if (g_device) AcquireReplacement(g_device, hash);
+        if (g_device) ReleaseInternal(AcquireReplacement(g_device, hash));
     }
 }
 
@@ -412,7 +445,7 @@ static void LazyHash(IDirect3DTexture9 *tex, const TexInfo &ti)
 {
     D3DLOCKED_RECT lr;
     HRESULT hr;
-    if (ti.pool == D3DPOOL_DEFAULT && !(ti.usage & D3DUSAGE_DYNAMIC)) goto fail; // nao bloqueavel
+    if (!Hashable(ti) || (ti.pool == D3DPOOL_DEFAULT && !(ti.usage & D3DUSAGE_DYNAMIC))) goto fail; // nao bloqueavel
     t_internal++;
     hr = o_TexLockRect(tex, 0, &lr, nullptr, D3DLOCK_READONLY | D3DLOCK_NOSYSLOCK);
     if (SUCCEEDED(hr)) {
@@ -484,7 +517,7 @@ static ULONG STDMETHODCALLTYPE H_TexRelease(IDirect3DTexture9 *t)
                 g_tex.erase(it);
             }
         }
-        if (drop) { t_internal++; o_TexRelease(drop); t_internal--; }
+        ReleaseInternal(drop);
     }
     return r;
 }
@@ -494,10 +527,16 @@ static HRESULT STDMETHODCALLTYPE H_SurfUnlockRect(IDirect3DSurface9 *s)
     HRESULT hr = o_SurfUnlockRect(s);
     if (t_internal) return hr;
     // escrita direta via superficie: marca a textura dona como "suja"
+    // (so o nivel 0 entra no hash; mipmaps menores sao ignorados)
     IDirect3DTexture9 *tex = nullptr;
     if (SUCCEEDED(IDirect3DSurface9_GetContainer(s, IID_IDirect3DTexture9, (void **)&tex)) && tex) {
-        { WLock l; auto it = g_tex.find(tex); if (it != g_tex.end()) it->second.dirty = true; }
-        t_internal++; IDirect3DTexture9_Release(tex); t_internal--;
+        D3DSURFACE_DESC sd;
+        if (SUCCEEDED(IDirect3DSurface9_GetDesc(s, &sd))) {
+            WLock l;
+            auto it = g_tex.find(tex);
+            if (it != g_tex.end() && sd.Width == it->second.w && sd.Height == it->second.h) it->second.dirty = true;
+        }
+        ReleaseInternal(tex);
     }
     return hr;
 }
@@ -529,8 +568,17 @@ static HRESULT STDMETHODCALLTYPE H_CreateTexture(IDirect3DDevice9 *d, UINT w, UI
     TexInfo ti;
     ti.w = w; ti.h = h; ti.levels = levels; ti.fmt = fmt; ti.pool = pool; ti.usage = usage;
     if (!Hashable(ti)) return hr;
-    WLock l;
-    g_tex[*out] = ti;
+    IDirect3DTexture9 *drop = nullptr;
+    {
+        WLock l;
+        auto it = g_tex.find(*out);
+        if (it != g_tex.end() && it->second.hashed && it->second.hasRep) { // entrada velha no mesmo endereco
+            auto rp = g_rep.find(it->second.hash);
+            if (rp != g_rep.end() && --rp->second.users <= 0) { drop = rp->second.tex; g_rep.erase(rp); }
+        }
+        g_tex[*out] = ti;
+    }
+    ReleaseInternal(drop);
     return hr;
 }
 
@@ -539,27 +587,25 @@ static HRESULT STDMETHODCALLTYPE H_SetTexture(IDirect3DDevice9 *d, DWORD stage, 
     if (!bt || !g_enabled || t_internal) return o_SetTexture(d, stage, bt);
     IDirect3DTexture9 *t = (IDirect3DTexture9 *)bt;
     TexInfo ti;
-    IDirect3DTexture9 *rep = nullptr;
     {
         AcquireSRWLockShared(&g_lock);
         auto it = g_tex.find(t);
         if (it == g_tex.end()) { ReleaseSRWLockShared(&g_lock); return o_SetTexture(d, stage, bt); }
         ti = it->second;
-        if (ti.hashed && ti.hasRep) {
-            auto r = g_rep.find(ti.hash);
-            if (r != g_rep.end()) rep = r->second.tex;
-        }
         ReleaseSRWLockShared(&g_lock);
     }
-    if (ti.dirty && !ti.lockBits) {
+    if (ti.dirty && !ti.lockBits && Hashable(ti)) {
         LazyHash(t, ti);
         AcquireSRWLockShared(&g_lock);
         auto it = g_tex.find(t);
         if (it != g_tex.end()) ti = it->second;
         ReleaseSRWLockShared(&g_lock);
     }
-    if (!rep && ti.hashed && ti.hasRep) rep = AcquireReplacement(d, ti.hash);
-    return o_SetTexture(d, stage, rep ? (IDirect3DBaseTexture9 *)rep : bt);
+    if (!ti.hashed || !ti.hasRep) return o_SetTexture(d, stage, bt);
+    IDirect3DTexture9 *rep = AcquireReplacement(d, ti.hash); // com AddRef
+    HRESULT hr = o_SetTexture(d, stage, rep ? (IDirect3DBaseTexture9 *)rep : bt);
+    ReleaseInternal(rep); // o device guarda a propria referencia
+    return hr;
 }
 
 // Textura DEFAULT preenchida via UpdateTexture(sysmem -> default): herda o hash da origem.
@@ -627,15 +673,20 @@ static void ReleaseAllReplacements()
         WLock l;
         for (auto &r : g_rep) { if (r.second.tex) drop.push_back(r.second.tex); r.second.tex = nullptr; r.second.failed = false; }
     }
-    t_internal++;
-    for (auto *t : drop) o_TexRelease(t);
-    t_internal--;
+    for (auto *t : drop) ReleaseInternal(t);
 }
 
 static HRESULT STDMETHODCALLTYPE H_Reset(IDirect3DDevice9 *d, D3DPRESENT_PARAMETERS *pp)
 {
     // texturas D3DPOOL_DEFAULT impedem o Reset; recarregadas sob demanda depois
-    if (g_pool == D3DPOOL_DEFAULT) ReleaseAllReplacements();
+    if (g_pool == D3DPOOL_DEFAULT) {
+        // textura ainda ligada a um stage continua viva e faria o Reset falhar
+        t_internal++;
+        for (DWORD s = 0; s < 16; s++) o_SetTexture(d, s, nullptr);
+        for (DWORD s = D3DVERTEXTEXTURESAMPLER0; s <= D3DVERTEXTEXTURESAMPLER3; s++) o_SetTexture(d, s, nullptr);
+        t_internal--;
+        ReleaseAllReplacements();
+    }
     HRESULT hr = o_Reset(d, pp);
     Log("Reset -> 0x%08X", (unsigned)hr);
     return hr;
@@ -645,7 +696,9 @@ static HRESULT STDMETHODCALLTYPE H_EndScene(IDirect3DDevice9 *d)
 {
     static bool keyWas;
     static DWORD lastStat;
-    bool down = (GetAsyncKeyState(g_toggleKey) & 0x8000) != 0;
+    DWORD fgPid = 0;
+    GetWindowThreadProcessId(GetForegroundWindow(), &fgPid);
+    bool down = fgPid == GetCurrentProcessId() && (GetAsyncKeyState(g_toggleKey) & 0x8000) != 0;
     if (down && !keyWas) {
         g_enabled = !g_enabled;
         Log("substituicao %s (tecla)", g_enabled ? "LIGADA" : "DESLIGADA");
@@ -759,7 +812,7 @@ static void Init()
     if (wchar_t *s = wcsrchr(g_gameDir, L'\\')) *s = 0;
     g_log = _wfopen((std::wstring(g_gameDir) + L"\\DS2TexInject.log").c_str(), L"w");
     LoadConfig();
-    Log("DS2TexInject iniciado. jogo=%ls pool=%s dump=%d logHashes=%d", g_gameDir,
+    Log("DS2TexInject " DS2TI_VERSION " iniciado. jogo=%ls pool=%s dump=%d logHashes=%d", g_gameDir,
         g_pool == D3DPOOL_MANAGED ? "managed" : "default", g_dump, g_logHashes);
     CrcInit();
     ScanTextureDir();

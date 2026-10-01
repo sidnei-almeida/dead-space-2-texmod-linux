@@ -137,7 +137,10 @@ def main():
                 if h in index:
                     overridden += index[h][0] != pack
                     continue
-                src = os.path.join(out, fn)
+                src = os.path.realpath(os.path.join(out, fn))
+                if not src.startswith(os.path.realpath(out) + os.sep):
+                    # caminho tipo ../../arquivo ou link simbolico: nunca sai da pasta temporaria
+                    problems.append('%s: caminho suspeito ignorado: %r' % (pack, fn)); continue
                 if not os.path.isfile(src):
                     problems.append('%s: %s listado mas ausente' % (pack, fn)); continue
                 data = open(src, 'rb').read()
@@ -146,7 +149,8 @@ def main():
                 if err:
                     problems.append('%s: %s (0x%08X): %s [%s]' % (pack, fn, h, err, desc)); continue
                 dst = os.path.join(cache, '0x%08X.%s' % (h, ext))
-                shutil.move(src, dst) if not os.path.exists(dst) else None
+                if not os.path.exists(dst):
+                    shutil.copyfile(src, dst)
                 index[h] = (pack, fn, desc, len(data))
                 n_ok += 1
             print('   %d texturas' % n_ok, flush=True)
