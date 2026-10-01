@@ -181,10 +181,53 @@ As texturas são trocadas conforme aparecem na tela. Os trajes e as armas aparec
 
 ---
 
+## Extras recomendados (opcionais)
+
+Nada disso é necessário para o mod de texturas. São extras que eu uso e gosto.
+
+### ReShade, instalado com o LeShade
+
+O [ReShade](https://reshade.me) adiciona efeitos de pós-processamento, como gradação de cor e nitidez. No Linux, o jeito mais fácil de instalar é o **LeShade**, um gerenciador de ReShade com interface gráfica:
+
+<a href="https://github.com/Ishidawg/LeShade"><img alt="Baixar LeShade" src="https://img.shields.io/badge/Baixar-LeShade-5ad8ff?style=for-the-badge&labelColor=0d1a1f&logo=github&logoColor=white"></a>
+
+1. Instale o LeShade e abra.
+2. Adicione o Dead Space 2 apontando para o `deadspace2.exe`.
+3. Escolha **DirectX 9** e instale. Instale também os pacotes de shaders listados abaixo.
+4. Use a opção de inicialização para ReShade do [Passo 2](#passo-2-opção-de-inicialização-no-steam).
+
+No jogo, o menu do ReShade abre com **Home**. O MarkerPatch também usa o Home para a lista de conquistas, então você pode trocar a tecla do ReShade nas configurações dele, se quiser.
+
+### Sprawl Noir: meu preset de ReShade
+
+O **Sprawl Noir** é um preset pessoal que eu uso no Dead Space 2. Ele é baseado em outro preset da comunidade, que eu ajustei ao meu gosto:
+
+- Cores mais ricas e com cara de cinema, com um leve tom quente.
+- Bloom suave.
+- Nitidez leve (as texturas 4K não precisam de muita).
+- Sem oclusão de ambiente e sem anti-aliasing, então pesa pouco na GPU.
+
+<a href="https://github.com/sidnei-almeida/dead-space-2-texmod-linux/blob/main/reshade/Sprawl%20Noir.ini"><img alt="Preset Sprawl Noir" src="https://img.shields.io/badge/Preset-Sprawl%20Noir-ff5a3c?style=for-the-badge&labelColor=0d1a1f&logo=github&logoColor=white"></a>
+
+1. Copie o `reshade/Sprawl Noir.ini` para a pasta do jogo.
+2. No jogo, aperte **Home**, abra a lista de presets no topo e escolha **Sprawl Noir**.
+
+Ele usa estes shaders. Se algum aparecer em vermelho, instale o pacote dele pelo LeShade (ou pelo instalador do ReShade):
+
+| Shaders | Pacote |
+|---|---|
+| `LUT.fx`, `Colourfulness.fx`, `AmbientLight.fx` | Shaders padrão / legacy do ReShade |
+| `Sepia.fx`, `LumaSharpen.fx`, `Curves.fx`, `Tonemap.fx`, `Levels.fx` | SweetFX |
+| `Artificial Lighting MLUT.fx`, `Atmospheric Film Affinity Presets MLUT.fx` | MLUT |
+
+Se algum efeito ficar forte demais na sua tela, é fácil ajustar no menu do ReShade.
+
+---
+
 ## Adicionar ou remover pacotes
 
 1. Coloque ou apague arquivos `.tpf` em `Dead Space 2/texmod/`.
-2. Rode de novo:
+2. Rode de novo (ele recria a pasta `texmod/_cache/` do zero, então não coloque arquivos seus lá):
    ```sh
    python3 ds2tex.py "/caminho/para/Dead Space 2/texmod"
    ```
@@ -199,7 +242,7 @@ O arquivo fica na pasta do jogo e abre em qualquer editor de texto.
 |---|---|---|
 | `Enabled` | `1` | `0` desliga a troca de texturas. |
 | `ToggleKey` | `0x79` | Tecla que liga e desliga as texturas. `0x79` é o **F10**. |
-| `Pool` | `managed` | Mude para `default` se o jogo fechar sozinho com muitos pacotes 4K. Gasta menos memória. |
+| `Pool` | `managed` | Mude para `default` (experimental) se o jogo fechar sozinho com muitos pacotes 4K. Gasta menos memória. |
 | `LogHashes` | `0` | `1` registra no log todas as texturas que o jogo carrega. Serve para diagnóstico. |
 | `DumpTextures` | `0` | `1` salva as texturas originais do jogo em `texmod/_dump/`. Serve para criar seus próprios pacotes. |
 | `TextureDir` | `texmod\_cache` | Pasta onde ficam as texturas extraídas. |
