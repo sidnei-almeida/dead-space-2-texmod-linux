@@ -1,10 +1,20 @@
-# DS2TexInject
+<p align="center"><img src="assets/banner.png" alt="Dead Space 2 TexMod for Linux" width="100%"></p>
 
-**Use TexMod texture packs (`.tpf`) in Dead Space 2 on Linux.**
+<h1 align="center">Dead Space 2 TexMod for Linux</h1>
 
-Works with Steam + Proton / GE-Proton, DXVK, ReShade and Steam Deck.
+<p align="center"><b>Load TexMod / uMod texture packs (<code>.tpf</code>) in Dead Space 2 on Linux. 4K suits, HD weapons and more.</b><br>
+Steam · Proton / GE-Proton · DXVK · ReShade · Steam Deck</p>
 
-🇧🇷 **[Leia em português →](README.pt-BR.md)**
+<p align="center">
+  <img alt="Linux" src="https://img.shields.io/badge/Linux-supported-3dffb0?style=for-the-badge&logo=linux&logoColor=white&labelColor=0d1a1f">
+  <img alt="Proton" src="https://img.shields.io/badge/Proton%20%2F%20GE--Proton-ready-5ad8ff?style=for-the-badge&logo=steam&logoColor=white&labelColor=0d1a1f">
+  <img alt="Steam Deck" src="https://img.shields.io/badge/Steam%20Deck-works-5ad8ff?style=for-the-badge&logo=steamdeck&logoColor=white&labelColor=0d1a1f">
+  <img alt="License MIT" src="https://img.shields.io/badge/license-MIT-ff5a3c?style=for-the-badge&labelColor=0d1a1f">
+</p>
+
+<p align="center"><i>"Make us whole."</i> Your RIG, now in 4K.</p>
+
+<p align="center">🇧🇷 <b><a href="README.pt-BR.md">Leia em português →</a></b></p>
 
 ---
 
@@ -30,7 +40,7 @@ Each step is explained in detail below.
 
 ---
 
-## Step 1 — Install MarkerPatch
+## Step 1: Install MarkerPatch
 
 [MarkerPatch](https://github.com/Wemino/MarkerPatch) is a fix pack for Dead Space 2. DS2TexInject needs it because MarkerPatch is what loads the plugin.
 
@@ -40,7 +50,7 @@ Each step is explained in detail below.
 > **Where is the game folder?** In Steam, right-click **Dead Space 2** → **Manage** → **Browse local files**.
 > It is usually `~/.local/share/Steam/steamapps/common/Dead Space 2`.
 
-## Step 2 — Add the Steam launch option
+## Step 2: Add the Steam launch option
 
 Proton ignores DLLs placed in the game folder unless you tell it to load them.
 
@@ -57,7 +67,7 @@ WINEDLLOVERRIDES="dinput8=n,b" %command%
 WINEDLLOVERRIDES="d3d9,dinput8=n,b" %command%
 ```
 
-## Step 3 — Get the texture packs
+## Step 3: Get the texture packs
 
 The texture packs are **not included** in this repository. They belong to their authors, so download them from the original pages.
 
@@ -82,13 +92,13 @@ Dead Space 2/
     └── ...
 ```
 
-## Step 4 — Install DS2TexInject
+## Step 4: Install DS2TexInject
 
 Open a terminal and run:
 
 ```sh
-git clone https://github.com/sidnei-almeida/ds2-texinject-linux
-cd ds2-texinject-linux
+git clone https://github.com/sidnei-almeida/dead-space-2-texmod-linux
+cd dead-space-2-texmod-linux
 ./install.sh
 ```
 
@@ -117,7 +127,7 @@ The installer's messages are in Portuguese. The last line means *"No broken text
 <details>
 <summary><b>Manual install (no compiling)</b></summary>
 
-1. Download `DS2TexInject.asi` and `DS2TexInject.ini` from the [Releases page](https://github.com/sidnei-almeida/ds2-texinject-linux/releases).
+1. Download `DS2TexInject.asi` and `DS2TexInject.ini` from the [Releases page](https://github.com/sidnei-almeida/dead-space-2-texmod-linux/releases).
 2. Put `DS2TexInject.asi` in `Dead Space 2/plugins/`. Create the `plugins` folder if it doesn't exist.
 3. Put `DS2TexInject.ini` in `Dead Space 2/`.
 4. Unpack your textures:
@@ -126,7 +136,7 @@ The installer's messages are in Portuguese. The last line means *"No broken text
    ```
 </details>
 
-## Step 5 — Play
+## Step 5: Play
 
 Launch Dead Space 2 from Steam as usual.
 
@@ -147,7 +157,7 @@ Textures are swapped as they appear on screen. Suits and weapons show up once yo
 
 **When two packs change the same texture,** the pack whose name comes first alphabetically wins. To choose the order yourself, create `texmod/load_order.txt` with one file name per line, most important first.
 
-## Settings — `DS2TexInject.ini`
+## Settings: `DS2TexInject.ini`
 
 The file is in the game folder. You can open it with any text editor.
 
@@ -170,7 +180,7 @@ The file is in the game folder. You can open it with any text editor.
 | **The log has no `MATCH` lines** | Make sure you ran `ds2tex.py` and that `texmod/_cache/` has files in it. Also play a bit: suits and weapons only appear later in the game. |
 | **The game crashes after playing a while** | Dead Space 2 is a 32-bit game and can run out of memory with many 4K textures. Set `Pool=default` in `DS2TexInject.ini`, or remove some packs. |
 | **A texture looks wrong** | Press **F10** to confirm the pack causes it, then open an issue and say which pack it is. |
-| **Something else** | [Open an issue](https://github.com/sidnei-almeida/ds2-texinject-linux/issues) and attach `DS2TexInject.log`. |
+| **Something else** | [Open an issue](https://github.com/sidnei-almeida/dead-space-2-texmod-linux/issues) and attach `DS2TexInject.log`. |
 
 ---
 
