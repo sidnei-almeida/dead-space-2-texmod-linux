@@ -44,7 +44,10 @@ Each step is explained in detail below.
 
 [MarkerPatch](https://github.com/Wemino/MarkerPatch) is a fix pack for Dead Space 2. DS2TexInject needs it because MarkerPatch is what loads the plugin.
 
-1. Download the latest release from **https://github.com/Wemino/MarkerPatch/releases**.
+1. Download the latest release:
+
+   <a href="https://github.com/Wemino/MarkerPatch/releases"><img alt="Download MarkerPatch" src="https://img.shields.io/badge/Download-MarkerPatch-5ad8ff?style=for-the-badge&labelColor=0d1a1f&logo=github&logoColor=white"></a>
+
 2. Extract it into the game folder, next to `deadspace2.exe`. You should end up with `dinput8.dll` and `MarkerPatch.ini` there.
 
 > **Where is the game folder?** In Steam, right-click **Dead Space 2** → **Manage** → **Browse local files**.
@@ -73,10 +76,29 @@ The texture packs are **not included** in this repository. They belong to their 
 
 These packs were tested and work:
 
-| Pack | Files |
-|---|---|
-| [2K-4K Isaac Suits and Face](https://www.nexusmods.com/deadspace2/mods/82) | `1-4KMainSuitsnew.tpf`, `2Kaio.tpf` |
-| [Return to Titan](https://www.nexusmods.com/deadspace2/mods/97) ([texture pack](https://www.nexusmods.com/deadspace2/mods/40)) | `1WEP_RTTn.tpf`, `3…9INTERACTABLES_RTT*.tpf` |
+#### 🟢 2K-4K Isaac Suits and Face
+
+Isaac's suits and face in 2K and 4K, plus sharper weapons.
+
+<a href="https://www.nexusmods.com/deadspace2/mods/82"><img alt="Nexus Mods Download" src="https://img.shields.io/badge/Nexus%20Mods-Download-da8e35?style=for-the-badge&labelColor=0d1a1f"></a>
+
+```
+1-4KMainSuitsnew.tpf
+2Kaio.tpf
+```
+
+#### 🔴 Return to Titan
+
+Lore-friendly skins for suits, weapons and interactables (lockers, supply boxes, node containers).
+
+<a href="https://www.nexusmods.com/deadspace2/mods/97"><img alt="Nexus Mods Return to Titan" src="https://img.shields.io/badge/Nexus%20Mods-Return%20to%20Titan-da8e35?style=for-the-badge&labelColor=0d1a1f"></a> <a href="https://www.nexusmods.com/deadspace2/mods/40"><img alt="Nexus Mods Texture Pack" src="https://img.shields.io/badge/Nexus%20Mods-Texture%20Pack-da8e35?style=for-the-badge&labelColor=0d1a1f"></a>
+
+```
+1WEP_RTTn.tpf
+3INTERACTABLES_RTTn.tpf    4INTERACTABLES_RTTn.tpf    5INTERACTABLES_RTTn.tpf
+6INTERACTABLES_RTT.tpf     7INTERACTABLES_RTT.tpf     8INTERACTABLES_RTT.tpf
+9INTERACTABLES_RTT.tpf
+```
 
 Any other Dead Space 2 `.tpf` pack should work too.
 
@@ -127,7 +149,10 @@ The installer's messages are in Portuguese. The last line means *"No broken text
 <details>
 <summary><b>Manual install (no compiling)</b></summary>
 
-1. Download `DS2TexInject.asi` and `DS2TexInject.ini` from the [Releases page](https://github.com/sidnei-almeida/dead-space-2-texmod-linux/releases).
+1. Download `DS2TexInject.asi` and `DS2TexInject.ini`:
+
+   <a href="https://github.com/sidnei-almeida/dead-space-2-texmod-linux/releases"><img alt="Download DS2TexInject" src="https://img.shields.io/badge/Download-DS2TexInject-3dffb0?style=for-the-badge&labelColor=0d1a1f&logo=github&logoColor=white"></a>
+
 2. Put `DS2TexInject.asi` in `Dead Space 2/plugins/`. Create the `plugins` folder if it doesn't exist.
 3. Put `DS2TexInject.ini` in `Dead Space 2/`.
 4. Unpack your textures:
@@ -180,7 +205,9 @@ The file is in the game folder. You can open it with any text editor.
 | **The log has no `MATCH` lines** | Make sure you ran `ds2tex.py` and that `texmod/_cache/` has files in it. Also play a bit: suits and weapons only appear later in the game. |
 | **The game crashes after playing a while** | Dead Space 2 is a 32-bit game and can run out of memory with many 4K textures. Set `Pool=default` in `DS2TexInject.ini`, or remove some packs. |
 | **A texture looks wrong** | Press **F10** to confirm the pack causes it, then open an issue and say which pack it is. |
-| **Something else** | [Open an issue](https://github.com/sidnei-almeida/dead-space-2-texmod-linux/issues) and attach `DS2TexInject.log`. |
+| **Something else** | Open an issue (button below) and attach `DS2TexInject.log`. |
+
+<p align="center"><a href="https://github.com/sidnei-almeida/dead-space-2-texmod-linux/issues"><img alt="Need help Open an issue" src="https://img.shields.io/badge/Need%20help-Open%20an%20issue-ff5a3c?style=for-the-badge&labelColor=0d1a1f&logo=github&logoColor=white"></a></p>
 
 ---
 
