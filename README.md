@@ -30,7 +30,7 @@ Dead Space 2 has great HD texture mods: 4K suits, weapons, and more. They come a
 
 | Step | What to do |
 |:---:|---|
-| 1 | Install **MarkerPatch** into the game folder. |
+| 1 | Install an **ASI loader**. **MarkerPatch** is recommended. |
 | 2 | Add a **Steam launch option**. |
 | 3 | Put your **`.tpf` packs** in a `texmod` folder. |
 | 4 | Run **`./install.sh`** from this repo. |
@@ -40,15 +40,26 @@ Each step is explained in detail below.
 
 ---
 
-## Step 1: Install MarkerPatch
+## Step 1: Install an ASI loader
 
-[MarkerPatch](https://github.com/Wemino/MarkerPatch) is a fix pack for Dead Space 2. DS2TexInject needs it because MarkerPatch is what loads the plugin.
+DS2TexInject is an `.asi` plugin. It doesn't run by itself: something has to load it into the game. That is an **ASI loader**, and you need **one** of these two:
 
-1. Download the latest release:
+| | Option | Why pick it |
+|:---:|---|---|
+| ⭐ | **MarkerPatch** (recommended) | Loads the plugin **and** fixes many Dead Space 2 bugs: high FPS physics, VSync locked to 30 FPS, crashes on CPUs with many cores, raw mouse input, and more. |
+| | **Ultimate ASI Loader** | Only loads the plugin. Use it if you don't want MarkerPatch. |
 
-   <a href="https://github.com/Wemino/MarkerPatch/releases"><img alt="Download MarkerPatch" src="https://img.shields.io/badge/Download-MarkerPatch-5ad8ff?style=for-the-badge&labelColor=0d1a1f&logo=github&logoColor=white"></a>
+**MarkerPatch (recommended):**
 
-2. Extract it into the game folder, next to `deadspace2.exe`. You should end up with `dinput8.dll` and `MarkerPatch.ini` there.
+<a href="https://github.com/Wemino/MarkerPatch/releases"><img alt="Download MarkerPatch" src="https://img.shields.io/badge/Download-MarkerPatch-5ad8ff?style=for-the-badge&labelColor=0d1a1f&logo=github&logoColor=white"></a>
+
+Extract it into the game folder, next to `deadspace2.exe`. You should end up with `dinput8.dll` and `MarkerPatch.ini` there.
+
+**Or Ultimate ASI Loader:**
+
+<a href="https://github.com/ThirteenAG/Ultimate-ASI-Loader/releases"><img alt="Download Ultimate ASI Loader" src="https://img.shields.io/badge/Download-Ultimate%20ASI%20Loader-7fa6b0?style=for-the-badge&labelColor=0d1a1f&logo=github&logoColor=white"></a>
+
+Get the **Win32** (32-bit) version and put its `dinput8.dll` in the game folder, next to `deadspace2.exe`.
 
 > **Where is the game folder?** In Steam, right-click **Dead Space 2** → **Manage** → **Browse local files**.
 > It is usually `~/.local/share/Steam/steamapps/common/Dead Space 2`.
@@ -107,7 +118,7 @@ Create a folder named **`texmod`** inside the game folder and put all the `.tpf`
 ```
 Dead Space 2/
 ├── deadspace2.exe
-├── dinput8.dll            ← MarkerPatch
+├── dinput8.dll            ← ASI loader (MarkerPatch or Ultimate ASI Loader)
 └── texmod/
     ├── 1-4KMainSuitsnew.tpf
     ├── 2Kaio.tpf
@@ -201,7 +212,7 @@ The file is in the game folder. You can open it with any text editor.
 
 | Problem | Solution |
 |---|---|
-| **No `DS2TexInject.log` file appears** | The plugin isn't loading. Check that `dinput8.dll` (MarkerPatch) is in the game folder, that `plugins/DS2TexInject.asi` exists, and that the launch option from Step 2 is set. |
+| **No `DS2TexInject.log` file appears** | The plugin isn't loading. Check that `dinput8.dll` (your ASI loader) is in the game folder, that `plugins/DS2TexInject.asi` exists, and that the launch option from Step 2 is set. |
 | **The log has no `MATCH` lines** | Make sure you ran `ds2tex.py` and that `texmod/_cache/` has files in it. Also play a bit: suits and weapons only appear later in the game. |
 | **The game crashes after playing a while** | Dead Space 2 is a 32-bit game and can run out of memory with many 4K textures. Set `Pool=default` in `DS2TexInject.ini`, or remove some packs. |
 | **A texture looks wrong** | Press **F10** to confirm the pack causes it, then open an issue and say which pack it is. |
@@ -223,7 +234,7 @@ You don't need this section to use the mod.
 
 **What DS2TexInject does instead:**
 
-1. MarkerPatch loads `DS2TexInject.asi` when the game starts.
+1. The ASI loader (MarkerPatch or Ultimate ASI Loader) loads `DS2TexInject.asi` when the game starts.
 2. The plugin hooks `Direct3DCreate9` inside whichever `d3d9.dll` the game uses (ReShade or DXVK). From there it hooks the Direct3D 9 device and texture methods.
 3. When the game uploads a texture, the plugin computes the same **CRC32 hash TexMod uses** (on the top mip level).
 4. If `texmod/_cache/0x<hash>.dds` (or `.png` / `.bmp`) exists, the plugin loads it and draws it instead of the original. Replacements are loaded only when needed and freed when the game stops using them.
@@ -245,7 +256,7 @@ It uses `i686-w64-mingw32-g++` if installed. If not, it downloads [llvm-mingw](h
 ## Credits
 
 - **Texture packs:** their respective authors on [Nexus Mods](https://www.nexusmods.com/deadspace2).
-- **[MarkerPatch](https://github.com/Wemino/MarkerPatch)** by Wemino, which loads the plugin.
+- **[MarkerPatch](https://github.com/Wemino/MarkerPatch)** by Wemino and **[Ultimate ASI Loader](https://github.com/ThirteenAG/Ultimate-ASI-Loader)** by ThirteenAG, which load the plugin.
 - Hash compatibility follows the behavior of **TexMod** and **[uMod](https://code.google.com/archive/p/texmod/)**.
 
 **Tested on:** Arch Linux, GE-Proton 11, DXVK, ReShade 6.8, MarkerPatch.

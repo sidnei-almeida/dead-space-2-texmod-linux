@@ -30,7 +30,7 @@ O Dead Space 2 tem ótimos mods de textura HD: trajes em 4K, armas e muito mais.
 
 | Passo | O que fazer |
 |:---:|---|
-| 1 | Instalar o **MarkerPatch** na pasta do jogo. |
+| 1 | Instalar um **ASI loader**. O **MarkerPatch** é o recomendado. |
 | 2 | Colocar uma **opção de inicialização** no Steam. |
 | 3 | Colocar seus **pacotes `.tpf`** numa pasta `texmod`. |
 | 4 | Rodar o **`./install.sh`** deste repositório. |
@@ -40,15 +40,26 @@ Cada passo está explicado em detalhe logo abaixo.
 
 ---
 
-## Passo 1: Instalar o MarkerPatch
+## Passo 1: Instalar um ASI loader
 
-O [MarkerPatch](https://github.com/Wemino/MarkerPatch) é um pacote de correções para o Dead Space 2. O DS2TexInject precisa dele porque é o MarkerPatch que carrega o plugin.
+O DS2TexInject é um plugin `.asi`. Ele não roda sozinho: precisa de algo que carregue ele no jogo. Esse algo é um **ASI loader**, e você precisa de **um** destes dois:
 
-1. Baixe a versão mais recente:
+| | Opção | Por que escolher |
+|:---:|---|---|
+| ⭐ | **MarkerPatch** (recomendado) | Carrega o plugin **e** corrige vários bugs do Dead Space 2: física com FPS alto, VSync travado em 30 FPS, travamento em processadores com muitos núcleos, mouse sem aceleração e mais. |
+| | **Ultimate ASI Loader** | Só carrega o plugin. Use se não quiser o MarkerPatch. |
 
-   <a href="https://github.com/Wemino/MarkerPatch/releases"><img alt="Baixar MarkerPatch" src="https://img.shields.io/badge/Baixar-MarkerPatch-5ad8ff?style=for-the-badge&labelColor=0d1a1f&logo=github&logoColor=white"></a>
+**MarkerPatch (recomendado):**
 
-2. Extraia na pasta do jogo, ao lado do `deadspace2.exe`. Os arquivos `dinput8.dll` e `MarkerPatch.ini` devem ficar lá.
+<a href="https://github.com/Wemino/MarkerPatch/releases"><img alt="Baixar MarkerPatch" src="https://img.shields.io/badge/Baixar-MarkerPatch-5ad8ff?style=for-the-badge&labelColor=0d1a1f&logo=github&logoColor=white"></a>
+
+Extraia na pasta do jogo, ao lado do `deadspace2.exe`. Os arquivos `dinput8.dll` e `MarkerPatch.ini` devem ficar lá.
+
+**Ou Ultimate ASI Loader:**
+
+<a href="https://github.com/ThirteenAG/Ultimate-ASI-Loader/releases"><img alt="Baixar Ultimate ASI Loader" src="https://img.shields.io/badge/Baixar-Ultimate%20ASI%20Loader-7fa6b0?style=for-the-badge&labelColor=0d1a1f&logo=github&logoColor=white"></a>
+
+Pegue a versão **Win32** (32 bits) e coloque o `dinput8.dll` dela na pasta do jogo, ao lado do `deadspace2.exe`.
 
 > **Onde fica a pasta do jogo?** No Steam, clique com o botão direito em **Dead Space 2** → **Gerenciar** → **Explorar arquivos locais**.
 > Normalmente é `~/.local/share/Steam/steamapps/common/Dead Space 2`.
@@ -107,7 +118,7 @@ Crie uma pasta chamada **`texmod`** dentro da pasta do jogo e coloque todos os `
 ```
 Dead Space 2/
 ├── deadspace2.exe
-├── dinput8.dll            ← MarkerPatch
+├── dinput8.dll            ← ASI loader (MarkerPatch ou Ultimate ASI Loader)
 └── texmod/
     ├── 1-4KMainSuitsnew.tpf
     ├── 2Kaio.tpf
@@ -199,7 +210,7 @@ O arquivo fica na pasta do jogo e abre em qualquer editor de texto.
 
 | Problema | Solução |
 |---|---|
-| **O arquivo `DS2TexInject.log` não aparece** | O plugin não está carregando. Confira se o `dinput8.dll` (MarkerPatch) está na pasta do jogo, se o `plugins/DS2TexInject.asi` existe e se a opção de inicialização do Passo 2 está configurada. |
+| **O arquivo `DS2TexInject.log` não aparece** | O plugin não está carregando. Confira se o `dinput8.dll` (seu ASI loader) está na pasta do jogo, se o `plugins/DS2TexInject.asi` existe e se a opção de inicialização do Passo 2 está configurada. |
 | **O log não tem linhas `MATCH`** | Confira se você rodou o `ds2tex.py` e se a pasta `texmod/_cache/` tem arquivos. Jogue um pouco também: os trajes e as armas só aparecem mais adiante no jogo. |
 | **O jogo fecha sozinho depois de um tempo** | O Dead Space 2 é um jogo de 32 bits e pode ficar sem memória com muitas texturas 4K. Coloque `Pool=default` no `DS2TexInject.ini` ou remova alguns pacotes. |
 | **Alguma textura ficou estranha** | Aperte **F10** para confirmar que é o pacote que causa isso. Depois abra uma issue dizendo qual é o pacote. |
@@ -221,7 +232,7 @@ Você não precisa desta parte para usar o mod.
 
 **O que o DS2TexInject faz no lugar:**
 
-1. O MarkerPatch carrega o `DS2TexInject.asi` quando o jogo abre.
+1. O ASI loader (MarkerPatch ou Ultimate ASI Loader) carrega o `DS2TexInject.asi` quando o jogo abre.
 2. O plugin intercepta o `Direct3DCreate9` dentro do `d3d9.dll` que o jogo estiver usando (ReShade ou DXVK). A partir daí ele intercepta os métodos de device e de textura do Direct3D 9.
 3. Quando o jogo envia uma textura, o plugin calcula o mesmo **hash CRC32 que o TexMod usa** (sobre o maior nível de mipmap).
 4. Se existir `texmod/_cache/0x<hash>.dds` (ou `.png` / `.bmp`), o plugin carrega esse arquivo e desenha ele no lugar do original. As substituições só são carregadas quando aparecem e são liberadas quando o jogo deixa de usar.
@@ -243,7 +254,7 @@ Ele usa o `i686-w64-mingw32-g++` se estiver instalado. Se não estiver, baixa o 
 ## Créditos
 
 - **Pacotes de textura:** os respectivos autores no [Nexus Mods](https://www.nexusmods.com/deadspace2).
-- **[MarkerPatch](https://github.com/Wemino/MarkerPatch)**, do Wemino, que carrega o plugin.
+- **[MarkerPatch](https://github.com/Wemino/MarkerPatch)**, do Wemino, e **[Ultimate ASI Loader](https://github.com/ThirteenAG/Ultimate-ASI-Loader)**, do ThirteenAG, que carregam o plugin.
 - A compatibilidade de hash segue o comportamento do **TexMod** e do **[uMod](https://code.google.com/archive/p/texmod/)**.
 
 **Testado em:** Arch Linux, GE-Proton 11, DXVK, ReShade 6.8 e MarkerPatch.

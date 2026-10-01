@@ -22,8 +22,8 @@ ASI="$HERE/dist/DS2TexInject.asi"
 [ -f "$ASI" ] || "$HERE/build.sh"
 
 if [ ! -f "$GAME/dinput8.dll" ]; then
-    echo "AVISO: dinput8.dll nao encontrado. Instale o MarkerPatch (https://github.com/Wemino/MarkerPatch)"
-    echo "       ou o Ultimate ASI Loader, senao o plugin nao e carregado."
+    echo "AVISO: dinput8.dll nao encontrado. Instale um ASI loader: MarkerPatch (recomendado, https://github.com/Wemino/MarkerPatch)"
+    echo "       ou Ultimate ASI Loader (versao Win32). Sem ele o plugin nao e carregado."
 fi
 
 mkdir -p "$GAME/plugins" "$GAME/texmod"
