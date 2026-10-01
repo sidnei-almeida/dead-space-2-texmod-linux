@@ -202,7 +202,7 @@ In-game, the ReShade menu opens with **Home**. MarkerPatch also uses Home for it
 
 ### Sprawl Noir: my ReShade preset
 
-**Sprawl Noir** is a personal preset I use with Dead Space 2. It is based on another community preset that I tuned to my taste:
+**Sprawl Noir** is my personal preset for Dead Space 2, made to my taste:
 
 - Horror over action: a cold, sickly green-gray tone, like the Sprawl's stations.
 - Desaturated colors and deeper shadows, so the RIG's blue and the red warnings stand out in the dark.
