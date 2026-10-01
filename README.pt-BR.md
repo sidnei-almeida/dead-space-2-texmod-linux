@@ -202,10 +202,11 @@ No jogo, o menu do ReShade abre com **Home**. O MarkerPatch também usa o Home p
 
 O **Sprawl Noir** é um preset pessoal que eu uso no Dead Space 2. Ele é baseado em outro preset da comunidade, que eu ajustei ao meu gosto:
 
-- Cores mais ricas e com cara de cinema, com um leve tom quente.
-- Bloom suave.
-- Nitidez leve (as texturas 4K não precisam de muita).
-- Sem oclusão de ambiente e sem anti-aliasing, então pesa pouco na GPU.
+- Mais horror do que ação: um tom verde-acinzentado frio e doentio, como as estações do Sprawl.
+- Cores menos saturadas e sombras mais fundas, para o azul do RIG e os alertas vermelhos se destacarem no escuro.
+- Vinheta e granulação de filme leve, para dar sensação de claustrofobia.
+- Bloom suave, nitidez leve e anti-aliasing SMAA.
+- Sem oclusão de ambiente, então pesa pouco na GPU.
 
 <a href="https://github.com/sidnei-almeida/dead-space-2-texmod-linux/blob/main/reshade/Sprawl%20Noir.ini"><img alt="Preset Sprawl Noir" src="https://img.shields.io/badge/Preset-Sprawl%20Noir-ff5a3c?style=for-the-badge&labelColor=0d1a1f&logo=github&logoColor=white"></a>
 
@@ -217,7 +218,7 @@ Ele usa estes shaders. Se algum aparecer em vermelho, instale o pacote dele pelo
 | Shaders | Pacote |
 |---|---|
 | `LUT.fx`, `Colourfulness.fx`, `AmbientLight.fx` | Shaders padrão / legacy do ReShade |
-| `Sepia.fx`, `LumaSharpen.fx`, `Curves.fx`, `Tonemap.fx`, `Levels.fx` | SweetFX |
+| `SMAA.fx`, `LiftGammaGain.fx`, `Sepia.fx`, `Curves.fx`, `Tonemap.fx`, `Levels.fx`, `LumaSharpen.fx`, `Vignette.fx`, `FilmGrain.fx` | SweetFX |
 | `Artificial Lighting MLUT.fx`, `Atmospheric Film Affinity Presets MLUT.fx` | MLUT |
 
 Se algum efeito ficar forte demais na sua tela, é fácil ajustar no menu do ReShade.
@@ -256,6 +257,7 @@ O arquivo fica na pasta do jogo e abre em qualquer editor de texto.
 | **O arquivo `DS2TexInject.log` não aparece** | O plugin não está carregando. Confira se o `dinput8.dll` (seu ASI loader) está na pasta do jogo, se o `plugins/DS2TexInject.asi` existe e se a opção de inicialização do Passo 2 está configurada. |
 | **O log não tem linhas `MATCH`** | Confira se você rodou o `ds2tex.py` e se a pasta `texmod/_cache/` tem arquivos. Jogue um pouco também: os trajes e as armas só aparecem mais adiante no jogo. |
 | **O jogo fecha sozinho depois de um tempo** | O Dead Space 2 é um jogo de 32 bits e pode ficar sem memória com muitas texturas 4K. Coloque `Pool=default` no `DS2TexInject.ini` ou remova alguns pacotes. |
+| **Ainda tem serrilhado de longe** | Parte disso é o motor de 2011 (hastes finas, cabos, grades). Renderizar em resolução maior ajuda: na opção do gamescope, use 1,5x ou 2x a resolução da tela em `-w`/`-h` (por exemplo `-w 5160 -h 2160` numa tela 3440x1440) e escolha a mesma resolução nas opções de vídeo do jogo. |
 | **Alguma textura ficou estranha** | Aperte **F10** para confirmar que é o pacote que causa isso. Depois abra uma issue dizendo qual é o pacote. |
 | **Qualquer outra coisa** | Abra uma issue (botão abaixo) e anexe o `DS2TexInject.log`. |
 
@@ -279,6 +281,7 @@ Você não precisa desta parte para usar o mod.
 2. O plugin intercepta o `Direct3DCreate9` dentro do `d3d9.dll` que o jogo estiver usando (ReShade ou DXVK). A partir daí ele intercepta os métodos de device e de textura do Direct3D 9.
 3. Quando o jogo envia uma textura, o plugin calcula o mesmo **hash CRC32 que o TexMod usa** (sobre o maior nível de mipmap).
 4. Se existir `texmod/_cache/0x<hash>.dds` (ou `.png` / `.bmp`), o plugin carrega esse arquivo e desenha ele no lugar do original. As substituições só são carregadas quando aparecem e são liberadas quando o jogo deixa de usar.
+5. Muitos pacotes trazem DDS **sem mipmaps**, o que faz a textura cintilar e serrilhar de longe. O plugin gera os mipmaps que faltam na primeira vez que carrega o arquivo e salva a versão corrigida em `texmod/_cache/`.
 
 **O que o `ds2tex.py` faz:**
 
