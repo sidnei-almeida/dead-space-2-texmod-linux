@@ -21,7 +21,7 @@
 #include <unordered_set>
 #include <vector>
 
-#define DS2TI_VERSION "1.2.0"
+#define DS2TI_VERSION "1.3.0"
 
 // ---------------------------------------------------------------- config/log
 
@@ -30,6 +30,7 @@ static std::wstring g_texDir, g_dumpDir;
 static bool g_enabled = true, g_logHashes = false, g_dump = false;
 static D3DPOOL g_pool = D3DPOOL_MANAGED;
 static int g_toggleKey = VK_F10;
+static int g_loadBudget = 4; // ms de carregamento a cada 10 ms (0 = sem limite)
 static FILE *g_log;
 static CRITICAL_SECTION g_logCs;
 
@@ -54,6 +55,8 @@ static void LoadConfig()
     g_dump = GetPrivateProfileIntW(L"DS2TexInject", L"DumpTextures", 0, ini.c_str()) != 0;
     GetPrivateProfileStringW(L"DS2TexInject", L"ToggleKey", L"0x79", buf, MAX_PATH, ini.c_str());
     g_toggleKey = (int)wcstol(buf, nullptr, 0);
+    g_loadBudget = GetPrivateProfileIntW(L"DS2TexInject", L"LoadBudget", 4, ini.c_str());
+    if (g_loadBudget < 0) g_loadBudget = 0;
     GetPrivateProfileStringW(L"DS2TexInject", L"Pool", L"managed", buf, MAX_PATH, ini.c_str());
     g_pool = (_wcsicmp(buf, L"default") == 0) ? D3DPOOL_DEFAULT : D3DPOOL_MANAGED;
     GetPrivateProfileStringW(L"DS2TexInject", L"TextureDir", L"texmod\\_cache", buf, MAX_PATH, ini.c_str());
@@ -501,7 +504,59 @@ static IDirect3DTexture9 *LoadReplacementFile(IDirect3DDevice9 *dev, uint32_t ha
     return t;
 }
 
+// ---------------------------------------------------------------- limite de carregamento
+// Ao entrar numa area nova chegam dezenas de substituicoes de uma vez. Carregar todas no mesmo
+// quadro trava o jogo (ex.: 27 texturas = 81 ms). Aqui o carregamento usa no maximo LoadBudget ms
+// a cada 10 ms (balde de fichas): o que passar do limite aparece com a textura original por alguns
+// quadros e e carregado logo depois. Funciona por tempo, nao por quadro, entao tambem vale durante
+// telas de carregamento, quando o jogo pode ficar muito tempo sem terminar um quadro.
+
+static SRWLOCK g_budgetLock = SRWLOCK_INIT;
+static double g_budgetTokens, g_budgetLast, g_qpcToMs;
+static volatile LONG g_statDeferred;
+
+static double NowMs()
+{
+    LARGE_INTEGER c;
+    QueryPerformanceCounter(&c);
+    return (double)c.QuadPart * g_qpcToMs;
+}
+
+static void BudgetInit()
+{
+    LARGE_INTEGER f;
+    QueryPerformanceFrequency(&f);
+    g_qpcToMs = 1000.0 / (double)f.QuadPart;
+    g_budgetTokens = g_loadBudget;
+    g_budgetLast = NowMs();
+}
+
+// true se ainda ha tempo de carregamento disponivel agora. O custo e descontado depois (BudgetSpend),
+// entao uma textura grande sempre carrega e o saldo so fica negativo por alguns milissegundos.
+static bool BudgetAllows()
+{
+    if (g_loadBudget <= 0) return true;
+    AcquireSRWLockExclusive(&g_budgetLock);
+    double now = NowMs();
+    g_budgetTokens += (now - g_budgetLast) * g_loadBudget / 10.0;
+    if (g_budgetTokens > g_loadBudget) g_budgetTokens = g_loadBudget;
+    g_budgetLast = now;
+    bool ok = g_budgetTokens > 0;
+    ReleaseSRWLockExclusive(&g_budgetLock);
+    return ok;
+}
+
+static void BudgetSpend(double ms)
+{
+    if (g_loadBudget <= 0) return;
+    AcquireSRWLockExclusive(&g_budgetLock);
+    g_budgetTokens -= ms;
+    ReleaseSRWLockExclusive(&g_budgetLock);
+}
+
 // Garante que a substituicao do hash esta carregada. Chamado SEM g_lock.
+// Se o limite de carregamento estourou, devolve nullptr sem marcar falha: o jogo usa a textura
+// original neste quadro e a substituicao e carregada na proxima vez que a textura for usada.
 // Devolve o ponteiro com AddRef (quem chama solta com ReleaseInternal), assim
 // outra thread nao consegue destruir a textura enquanto ela esta sendo usada.
 static void ReleaseInternal(IDirect3DTexture9 *t)
@@ -522,8 +577,11 @@ static IDirect3DTexture9 *AcquireReplacement(IDirect3DDevice9 *dev, uint32_t has
         if (f == g_files.end()) { it->second.failed = true; return nullptr; }
         path = f->second;
     }
-    DWORD t0 = GetTickCount();
+    if (!BudgetAllows()) { InterlockedIncrement(&g_statDeferred); return nullptr; }
+    double t0 = NowMs();
     IDirect3DTexture9 *t = LoadReplacementFile(dev, hash, path);
+    double ms = NowMs() - t0;
+    BudgetSpend(ms);
     IDirect3DTexture9 *extra = nullptr, *ret = nullptr;
     {
         WLock l;
@@ -547,7 +605,7 @@ static IDirect3DTexture9 *AcquireReplacement(IDirect3DDevice9 *dev, uint32_t has
     if (ret == t) {
         InterlockedIncrement(&g_statLoaded);
         D3DSURFACE_DESC sd; IDirect3DTexture9_GetLevelDesc(t, 0, &sd);
-        Log("carregada 0x%08X  %ux%u fmt=0x%X  (%lu ms)", hash, sd.Width, sd.Height, (unsigned)sd.Format, GetTickCount() - t0);
+        Log("carregada 0x%08X  %ux%u fmt=0x%X  (%.1f ms)", hash, sd.Width, sd.Height, (unsigned)sd.Format, ms);
     }
     return ret;
 }
@@ -907,8 +965,8 @@ static HRESULT STDMETHODCALLTYPE H_EndScene(IDirect3DDevice9 *d)
         lastStat = now;
         size_t live, reps = 0;
         { AcquireSRWLockShared(&g_lock); live = g_tex.size(); for (auto &r : g_rep) reps += r.second.tex != nullptr; ReleaseSRWLockShared(&g_lock); }
-        Log("stats: texturas vivas=%u hashes=%ld matches=%ld carregadas=%ld substituicoes ativas=%u",
-            (unsigned)live, g_statHashed, g_statMatched, g_statLoaded, (unsigned)reps);
+        Log("stats: texturas vivas=%u hashes=%ld matches=%ld carregadas=%ld substituicoes ativas=%u adiadas=%ld",
+            (unsigned)live, g_statHashed, g_statMatched, g_statLoaded, (unsigned)reps, g_statDeferred);
     }
     return o_EndScene(d);
 }
@@ -1010,8 +1068,9 @@ static void Init()
     if (wchar_t *s = wcsrchr(g_gameDir, L'\\')) *s = 0;
     g_log = _wfopen((std::wstring(g_gameDir) + L"\\DS2TexInject.log").c_str(), L"w");
     LoadConfig();
-    Log("DS2TexInject " DS2TI_VERSION " iniciado. jogo=%ls pool=%s dump=%d logHashes=%d", g_gameDir,
-        g_pool == D3DPOOL_MANAGED ? "managed" : "default", g_dump, g_logHashes);
+    BudgetInit();
+    Log("DS2TexInject " DS2TI_VERSION " iniciado. jogo=%ls pool=%s dump=%d logHashes=%d loadBudget=%d", g_gameDir,
+        g_pool == D3DPOOL_MANAGED ? "managed" : "default", g_dump, g_logHashes, g_loadBudget);
     CrcInit();
     ScanTextureDir();
     if (HMODULE dx = LoadLibraryW(L"d3dx9_43.dll"))

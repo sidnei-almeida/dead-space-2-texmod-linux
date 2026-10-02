@@ -246,6 +246,7 @@ The file is in the game folder. You can open it with any text editor.
 | `Enabled` | `1` | `0` turns texture replacement off. |
 | `ToggleKey` | `0x79` | Key that turns the textures on and off. `0x79` is **F10**. |
 | `Pool` | `managed` | Change to `default` (experimental) if the game crashes with many 4K packs. It uses less memory. |
+| `LoadBudget` | `4` | Load limit: at most this many ms spent loading new textures per 10 ms of play. Prevents stutters when entering new areas: textures that don't fit show the original for a few frames and pop in right after. `0` loads everything immediately, like older versions. |
 | `LogHashes` | `0` | `1` logs every texture the game loads. Useful for debugging. |
 | `DumpTextures` | `0` | `1` saves the game's original textures to `texmod/_dump/`. Useful for making your own packs. |
 | `TextureDir` | `texmod\_cache` | Where the unpacked textures are. |
@@ -259,6 +260,7 @@ The file is in the game folder. You can open it with any text editor.
 | **No `DS2TexInject.log` file appears** | The plugin isn't loading. Check that `dinput8.dll` (your ASI loader) is in the game folder, that `plugins/DS2TexInject.asi` exists, and that the launch option from Step 2 is set. |
 | **The log has no `MATCH` lines** | Make sure you ran `ds2tex.py` and that `texmod/_cache/` has files in it. Also play a bit: suits and weapons only appear later in the game. |
 | **The game crashes after playing a while** | Dead Space 2 is a 32-bit game and can run out of memory with many 4K textures. Set `Pool=default` in `DS2TexInject.ini`, or remove some packs. |
+| **The game stutters when entering new areas** | Make sure you're on v1.3.0 or newer (`LoadBudget` in `DS2TexInject.ini`) and that Pillow is installed, then run `ds2tex.py` again so every texture is game-ready. If it still stutters, lower `LoadBudget` to `2`. Part of the first-visit stutter is DXVK compiling shaders; keep Steam's shader pre-caching on and it fades as you play. |
 | **Edges still look jagged far away** | Some of it is the 2011 engine (thin poles, cables, grates). Rendering at a higher resolution helps: in the gamescope launch option, use 1.5x or 2x your screen size in `-w`/`-h` (for example `-w 5160 -h 2160` on a 3440x1440 screen) and set the same resolution in the game's video options. |
 | **A texture looks wrong** | Press **F10** to confirm the pack causes it, then open an issue and say which pack it is. |
 | **Something else** | Open an issue (button below) and attach `DS2TexInject.log`. |
@@ -284,6 +286,7 @@ You don't need this section to use the mod.
 3. When the game uploads a texture, the plugin computes the same **CRC32 hash TexMod uses** (on the top mip level).
 4. If `texmod/_cache/0x<hash>.dds` (or `.png` / `.bmp`) exists, the plugin loads it and draws it instead of the original. Replacements are loaded only when needed and freed when the game stops using them.
 5. Many packs ship DDS files **without mipmaps**, which makes textures shimmer and look jagged from a distance. The plugin generates the missing mipmaps the first time it loads such a file and saves the fixed file back to `texmod/_cache/`.
+6. Loading is **rate-limited** (`LoadBudget`): a token bucket allows a few milliseconds of loading per 10 ms of wall time. Entering a new area used to load dozens of replacements inside a single frame (27 textures, 81 ms in one measured case); now they are spread over a few frames, and the original texture shows until its replacement is ready. Being time-based, it also works on loading screens, where the game may go a long time without finishing a frame.
 
 **What `ds2tex.py` does:**
 

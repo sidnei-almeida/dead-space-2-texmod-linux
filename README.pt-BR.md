@@ -244,6 +244,7 @@ O arquivo fica na pasta do jogo e abre em qualquer editor de texto.
 | `Enabled` | `1` | `0` desliga a troca de texturas. |
 | `ToggleKey` | `0x79` | Tecla que liga e desliga as texturas. `0x79` é o **F10**. |
 | `Pool` | `managed` | Mude para `default` (experimental) se o jogo fechar sozinho com muitos pacotes 4K. Gasta menos memória. |
+| `LoadBudget` | `4` | Limite de carregamento: no máximo esses ms carregando texturas novas a cada 10 ms de jogo. Evita engasgos ao entrar em áreas novas: o que não couber aparece com a textura original por alguns quadros e é trocado logo depois. `0` carrega tudo na hora, como nas versões antigas. |
 | `LogHashes` | `0` | `1` registra no log todas as texturas que o jogo carrega. Serve para diagnóstico. |
 | `DumpTextures` | `0` | `1` salva as texturas originais do jogo em `texmod/_dump/`. Serve para criar seus próprios pacotes. |
 | `TextureDir` | `texmod\_cache` | Pasta onde ficam as texturas extraídas. |
@@ -257,6 +258,7 @@ O arquivo fica na pasta do jogo e abre em qualquer editor de texto.
 | **O arquivo `DS2TexInject.log` não aparece** | O plugin não está carregando. Confira se o `dinput8.dll` (seu ASI loader) está na pasta do jogo, se o `plugins/DS2TexInject.asi` existe e se a opção de inicialização do Passo 2 está configurada. |
 | **O log não tem linhas `MATCH`** | Confira se você rodou o `ds2tex.py` e se a pasta `texmod/_cache/` tem arquivos. Jogue um pouco também: os trajes e as armas só aparecem mais adiante no jogo. |
 | **O jogo fecha sozinho depois de um tempo** | O Dead Space 2 é um jogo de 32 bits e pode ficar sem memória com muitas texturas 4K. Coloque `Pool=default` no `DS2TexInject.ini` ou remova alguns pacotes. |
+| **O jogo engasga ao entrar em áreas novas** | Confira se está na v1.3.0 ou mais nova (`LoadBudget` no `DS2TexInject.ini`) e se o Pillow está instalado, e rode o `ds2tex.py` de novo para deixar todas as texturas prontas. Se ainda engasgar, baixe o `LoadBudget` para `2`. Parte do engasgo na primeira visita é o DXVK compilando shaders; deixe o pré-cache de shaders do Steam ligado e isso diminui conforme você joga. |
 | **Ainda tem serrilhado de longe** | Parte disso é o motor de 2011 (hastes finas, cabos, grades). Renderizar em resolução maior ajuda: na opção do gamescope, use 1,5x ou 2x a resolução da tela em `-w`/`-h` (por exemplo `-w 5160 -h 2160` numa tela 3440x1440) e escolha a mesma resolução nas opções de vídeo do jogo. |
 | **Alguma textura ficou estranha** | Aperte **F10** para confirmar que é o pacote que causa isso. Depois abra uma issue dizendo qual é o pacote. |
 | **Qualquer outra coisa** | Abra uma issue (botão abaixo) e anexe o `DS2TexInject.log`. |
@@ -282,6 +284,7 @@ Você não precisa desta parte para usar o mod.
 3. Quando o jogo envia uma textura, o plugin calcula o mesmo **hash CRC32 que o TexMod usa** (sobre o maior nível de mipmap).
 4. Se existir `texmod/_cache/0x<hash>.dds` (ou `.png` / `.bmp`), o plugin carrega esse arquivo e desenha ele no lugar do original. As substituições só são carregadas quando aparecem e são liberadas quando o jogo deixa de usar.
 5. Muitos pacotes trazem DDS **sem mipmaps**, o que faz a textura cintilar e serrilhar de longe. O plugin gera os mipmaps que faltam na primeira vez que carrega o arquivo e salva a versão corrigida em `texmod/_cache/`.
+6. O carregamento tem um **limite de ritmo** (`LoadBudget`): um "balde de fichas" libera alguns milissegundos de carregamento a cada 10 ms. Antes, entrar numa área nova carregava dezenas de substituições dentro de um único quadro (27 texturas em 81 ms num caso medido); agora elas são distribuídas por alguns quadros, e a textura original aparece até a substituição ficar pronta. Como funciona por tempo, também vale nas telas de carregamento, quando o jogo pode passar muito tempo sem terminar um quadro.
 
 **O que o `ds2tex.py` faz:**
 
