@@ -125,12 +125,31 @@ def _encode_level(Image, img, fourcc):
     return buf.getvalue()[128:]
 
 
+def _open_bmp32(Image, path):
+    """BMP de 32 bits: o Pillow abre como RGB e descarta o 4o byte, mas o D3DX (e os pacotes TexMod)
+    usam esse byte como alpha. Le direto do arquivo. Retorna None se nao for esse caso."""
+    d = open(path, 'rb').read()
+    if len(d) < 54 or d[:2] != b'BM':
+        return None
+    off, hsize = struct.unpack('<II', d[10:18])
+    w, h, _, bpp, comp = struct.unpack('<iiHHI', d[18:34])
+    if bpp != 32 or comp not in (0, 3) or w <= 0 or h == 0:
+        return None
+    if len(d) < off + w * abs(h) * 4:
+        return None
+    img = Image.frombuffer('RGBA', (w, abs(h)), d[off:off + w * abs(h) * 4], 'raw', 'BGRA', 0, -1 if h > 0 else 1)
+    if img.getchannel('A').getextrema() == (0, 0):
+        img.putalpha(255)  # 4o byte vazio: e so preenchimento, a imagem e opaca
+    return img.copy()
+
+
 def optimize(path):
     """Deixa a textura pronta para o jogo. Retorna (novo_caminho, descricao) ou None se nada mudou."""
     from PIL import Image
     ext = path.rsplit('.', 1)[-1].lower()
     if ext in ('png', 'bmp', 'tga', 'jpg', 'jpeg'):
-        img = Image.open(path).convert('RGBA')
+        img = _open_bmp32(Image, path) if ext == 'bmp' else None
+        img = img or Image.open(path).convert('RGBA')
         levels = [img] + _mips_below(Image, img, False)
         data = _dds_header(img.size[0], img.size[1], len(levels), None, 0) + \
             b''.join(_encode_level(Image, lv, None) for lv in levels)
