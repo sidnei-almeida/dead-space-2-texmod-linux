@@ -24,6 +24,42 @@ O Dead Space 2 tem ótimos mods de textura HD: trajes em 4K, armas e muito mais.
 
 **O TexMod e o uMod não funcionam no Linux.** O DS2TexInject faz o papel deles. É um plugin pequeno que roda dentro do jogo, encontra as texturas que os seus pacotes substituem e faz a troca. Os `.tpf` que você já tem funcionam sem mudar nada.
 
+**Funciona no Windows também.** Veja [Windows](#windows) logo abaixo. No Linux, pule para o [Resumo rápido](#resumo-rápido).
+
+---
+
+## Windows
+
+No Windows tem um instalador `.exe` que faz tudo sozinho. Não precisa de Python nem de opção de inicialização.
+
+1. Crie uma pasta **`texmod`** dentro da pasta do jogo e coloque nela seus pacotes `.tpf` e `.zip` (veja o [Passo 3](#passo-3-baixar-os-pacotes-de-textura)).
+2. Rode o instalador de **um** destes jeitos:
+
+   **PowerShell** (baixa e roda a versão mais nova):
+   ```powershell
+   irm https://raw.githubusercontent.com/sidnei-almeida/dead-space-2-texmod-linux/main/install.ps1 | iex
+   ```
+   **Prompt de comando (curl):**
+   ```bat
+   curl -L -o "%TEMP%\DS2TexInject-Setup.exe" https://github.com/sidnei-almeida/dead-space-2-texmod-linux/releases/latest/download/DS2TexInject-Setup.exe && "%TEMP%\DS2TexInject-Setup.exe"
+   ```
+   **Ou baixe e dê dois cliques:**
+
+   <a href="https://github.com/sidnei-almeida/dead-space-2-texmod-linux/releases/latest/download/DS2TexInject-Setup.exe"><img alt="Baixar DS2TexInject-Setup.exe" src="https://img.shields.io/badge/Baixar-DS2TexInject--Setup.exe-3dffb0?style=for-the-badge&labelColor=0d1a1f&logo=windows&logoColor=white"></a>
+
+3. Jogue normalmente pela Steam ou pelo EA app. **F10** liga e desliga as texturas.
+
+O instalador:
+
+- encontra o Dead Space 2 (bibliotecas da Steam, EA app/Origin, registro do Windows). Se não achar, abre uma janela para você escolher o `deadspace2.exe`;
+- oferece baixar e instalar o **MarkerPatch** se ainda não houver um ASI loader;
+- instala `plugins\DS2TexInject.asi` e `DS2TexInject.ini`;
+- prepara todos os pacotes de `texmod\` em `texmod\_cache\`, inclusive zips grandes como um remaster de vários GB. Se nada mudou desde a última vez, ele pula essa etapa.
+
+Adicionou ou removeu pacotes? Rode o instalador de novo. Para refazer as texturas do zero: `DS2TexInject-Setup.exe --rebuild`. Para indicar a pasta do jogo: `DS2TexInject-Setup.exe "D:\Jogos\Dead Space 2"`.
+
+> O Windows SmartScreen pode avisar que o `.exe` não é assinado. Clique em **Mais informações → Executar assim mesmo**. O código está em `src/ds2setup.cpp`.
+
 ---
 
 ## Resumo rápido
@@ -137,12 +173,13 @@ cd dead-space-2-texmod-linux
 
 O instalador faz tudo sozinho:
 
-- acha a pasta do Dead Space 2 nas suas bibliotecas do Steam;
+- acha a pasta do Dead Space 2 nas suas bibliotecas do Steam (se não achar, pergunta onde ela está);
+- oferece baixar o MarkerPatch se ainda não houver um ASI loader;
 - compila o plugin (na primeira vez ele baixa um compilador, sem precisar de `sudo`);
 - copia o plugin para `Dead Space 2/plugins/`;
 - extrai e verifica todas as texturas dos seus `.tpf`.
 
-Se ele não achar a pasta do jogo sozinho, passe o caminho:
+Você também pode passar a pasta do jogo direto:
 
 ```sh
 ./install.sh "/caminho/para/Dead Space 2"
@@ -295,10 +332,10 @@ Com o Pillow instalado (`sudo pacman -S python-pillow`), ele também deixa cada 
 **Para compilar você mesmo:**
 
 ```sh
-./build.sh      # gera dist/DS2TexInject.asi
+./build.sh      # gera dist/DS2TexInject.asi e dist/DS2TexInject-Setup.exe
 ```
 
-Ele usa o `i686-w64-mingw32-g++` se estiver instalado. Se não estiver, baixa o [llvm-mingw](https://github.com/mstorsjo/llvm-mingw) em `~/.local/opt`. Todo o código está em `src/ds2texinject.cpp`.
+Ele usa o `mingw-w64-gcc` se estiver instalado. Se não estiver, baixa o [llvm-mingw](https://github.com/mstorsjo/llvm-mingw) em `~/.local/opt`. O plugin é o `src/ds2texinject.cpp`; o instalador do Windows é o `src/ds2setup.cpp` (uma versão em C++ do `ds2tex.py`, usando [stb_image e stb_dxt](https://github.com/nothings/stb), domínio público).
 
 ---
 

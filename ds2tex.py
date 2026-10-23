@@ -206,13 +206,17 @@ def main():
     for pack in packs:
         print('>> %s' % pack, flush=True)
         with tempfile.TemporaryDirectory(dir=texdir, prefix='.tmp_') as tmp:
-            try:
-                zbytes = decode_tpf(os.path.join(texdir, pack))
-            except Exception as e:
-                problems.append('%s: %s' % (pack, e)); continue
-            zpath = os.path.join(tmp, 'p.zip')
-            open(zpath, 'wb').write(zbytes)
-            del zbytes
+            zpath = os.path.join(texdir, pack)
+            with open(zpath, 'rb') as f:
+                plain_zip = f.read(4) == b'PK\x03\x04'
+            if not plain_zip:  # zip normal (ex.: pacote de varios GB) e lido direto, sem copiar para a memoria
+                try:
+                    zbytes = decode_tpf(zpath)
+                except Exception as e:
+                    problems.append('%s: %s' % (pack, e)); continue
+                zpath = os.path.join(tmp, 'p.zip')
+                open(zpath, 'wb').write(zbytes)
+                del zbytes
             out = os.path.join(tmp, 'x')
             r = subprocess.run([b'unzip', b'-o', b'-qq', b'-P', TEXMOD_PW, zpath.encode(), b'-d', out.encode()],
                                capture_output=True)

@@ -1,0 +1,6 @@
+// Recursos do DS2TexInject-Setup.exe: manifest e os arquivos que o instalador grava na pasta do jogo.
+// Caminhos relativos a raiz do repositorio (o build.sh compila de la).
+#include <winuser.h>
+1 RT_MANIFEST "src/ds2setup.manifest"
+101 RCDATA "dist/DS2TexInject.asi"
+102 RCDATA "DS2TexInject.ini"
