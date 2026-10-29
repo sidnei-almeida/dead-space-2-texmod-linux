@@ -16,7 +16,10 @@ else
     LLVM_MINGW=$(ls -d "$HOME"/.local/opt/llvm-mingw-*/ 2>/dev/null | tail -1 || true)
     if [ -z "$LLVM_MINGW" ]; then
         echo "Nenhum compilador mingw encontrado. Baixando llvm-mingw para ~/.local/opt (sem sudo)..."
-        TAG=$(curl -fsSL https://api.github.com/repos/mstorsjo/llvm-mingw/releases/latest | grep -m1 '"tag_name"' | cut -d'"' -f4)
+        # A versao vem do redirect de releases/latest. Nao usar "curl | grep -m1": o grep fecha o
+        # pipe cedo, o curl falha (erro 23) e o pipefail derruba o script sem mensagem.
+        TAG=$(curl -fsSLI -o /dev/null -w '%{url_effective}' https://github.com/mstorsjo/llvm-mingw/releases/latest)
+        TAG=${TAG##*/}
         mkdir -p "$HOME/.local/opt"
         curl -fL "https://github.com/mstorsjo/llvm-mingw/releases/download/$TAG/llvm-mingw-$TAG-ucrt-ubuntu-22.04-x86_64.tar.xz" \
             | tar xJ -C "$HOME/.local/opt"

@@ -34,6 +34,14 @@
 #include <unordered_map>
 #include <vector>
 
+// O llvm-mingw usa _WIN32_WINNT=0x601 por padrao e so define estas flags a partir de 0xA00
+#ifndef RRF_SUBKEY_WOW6464KEY
+#define RRF_SUBKEY_WOW6464KEY 0x00010000
+#endif
+#ifndef RRF_SUBKEY_WOW6432KEY
+#define RRF_SUBKEY_WOW6432KEY 0x00020000
+#endif
+
 #define STBI_NO_STDIO
 #define STBI_NO_HDR
 #define STBI_NO_LINEAR
@@ -46,7 +54,7 @@
 #define STB_DXT_IMPLEMENTATION
 #include "third_party/stb_dxt.h"
 
-#define DS2SETUP_VERSION "1.4.0"
+#define DS2SETUP_VERSION "1.4.1"
 #define MARKERPATCH_URL L"https://github.com/Wemino/MarkerPatch/releases/latest/download/MarkerPatch.zip"
 #define RES_ASI 101
 #define RES_INI 102

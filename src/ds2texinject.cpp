@@ -21,7 +21,7 @@
 #include <unordered_set>
 #include <vector>
 
-#define DS2TI_VERSION "1.4.0"
+#define DS2TI_VERSION "1.4.1"
 
 // ---------------------------------------------------------------- config/log
 
