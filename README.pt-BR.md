@@ -30,7 +30,7 @@ O Dead Space 2 tem ótimos mods de textura HD: trajes em 4K, armas e muito mais.
 
 ## Windows
 
-No Windows tem um instalador `.exe` que faz tudo sozinho. Não precisa de Python nem de opção de inicialização.
+No Windows tem um instalador `.exe` que faz tudo sozinho. Não precisa de Python nem de opção de inicialização. Precisa do Windows 10 ou 11.
 
 1. Crie uma pasta **`texmod`** dentro da pasta do jogo e coloque nela seus pacotes `.tpf` e `.zip` (veja o [Passo 3](#passo-3-baixar-os-pacotes-de-textura)).
 2. Rode o instalador de **um** destes jeitos:
@@ -56,7 +56,7 @@ O instalador:
 - instala `plugins\DS2TexInject.asi` e `DS2TexInject.ini`;
 - prepara todos os pacotes de `texmod\` em `texmod\_cache\`, inclusive zips grandes como um remaster de vários GB. Se nada mudou desde a última vez, ele pula essa etapa.
 
-Adicionou ou removeu pacotes? Rode o instalador de novo. Para refazer as texturas do zero: `DS2TexInject-Setup.exe --rebuild`. Para indicar a pasta do jogo: `DS2TexInject-Setup.exe "D:\Jogos\Dead Space 2"`.
+Adicionou ou removeu pacotes, ou quer a versão mais nova? Rode o instalador de novo. Para refazer as texturas do zero: `DS2TexInject-Setup.exe --rebuild`. Para indicar a pasta do jogo: `DS2TexInject-Setup.exe "D:\Jogos\Dead Space 2"`.
 
 > O Windows SmartScreen pode avisar que o `.exe` não é assinado. Clique em **Mais informações → Executar assim mesmo**. O código está em `src/ds2setup.cpp`.
 
@@ -185,6 +185,8 @@ Você também pode passar a pasta do jogo direto:
 ./install.sh "/caminho/para/Dead Space 2"
 ```
 
+Para atualizar depois, rode `git pull` e o `./install.sh` de novo. Ele recompila o plugin quando o código mudou e mantém suas texturas.
+
 No final deve aparecer algo assim:
 
 ```
@@ -212,7 +214,7 @@ Nenhuma textura quebrada encontrada.
 Abra o Dead Space 2 pelo Steam, normalmente.
 
 - Aperte **F10** durante o jogo para **ligar e desligar** as texturas novas e ver a diferença.
-- Para confirmar que está funcionando, abra `Dead Space 2/DS2TexInject.log`. Cada linha `MATCH` é uma textura sendo trocada.
+- Para confirmar que está funcionando, abra `Dead Space 2/DS2TexInject.log`. Cada linha `MATCH` é uma textura sendo trocada. No Windows, se o jogo estiver numa pasta protegida como `C:\Program Files` (EA app), o log vai para `%LOCALAPPDATA%\DS2TexInject\DS2TexInject.log`.
 
 As texturas são trocadas conforme aparecem na tela. Os trajes e as armas aparecem quando você os pega no jogo.
 
@@ -292,7 +294,8 @@ O arquivo fica na pasta do jogo e abre em qualquer editor de texto.
 
 | Problema | Solução |
 |---|---|
-| **O arquivo `DS2TexInject.log` não aparece** | O plugin não está carregando. Confira se o `dinput8.dll` (seu ASI loader) está na pasta do jogo, se o `plugins/DS2TexInject.asi` existe e se a opção de inicialização do Passo 2 está configurada. |
+| **Windows: nada muda, o F10 não faz nada e não aparece log** | Atualize para a v1.5.0 ou mais nova: rode o instalador de novo. O plugin da v1.4.1 precisava de um arquivo que o Windows não tem, e o Windows se recusava a carregá-lo. |
+| **O arquivo `DS2TexInject.log` não aparece** | No Windows, olhe primeiro em `%LOCALAPPDATA%\DS2TexInject\`: quando a pasta do jogo é protegida (`C:\Program Files`), o log vai para lá. Se também não estiver lá, o plugin não está carregando. Confira se o `dinput8.dll` (seu ASI loader) está na pasta do jogo, se o `plugins/DS2TexInject.asi` existe e se a opção de inicialização do Passo 2 está configurada. |
 | **O log não tem linhas `MATCH`** | Confira se você rodou o `ds2tex.py` e se a pasta `texmod/_cache/` tem arquivos. Jogue um pouco também: os trajes e as armas só aparecem mais adiante no jogo. |
 | **O jogo fecha sozinho depois de um tempo** | O Dead Space 2 é um jogo de 32 bits e pode ficar sem memória com muitas texturas 4K. Coloque `Pool=default` no `DS2TexInject.ini` ou remova alguns pacotes. |
 | **O jogo engasga ao entrar em áreas novas** | Confira se está na v1.3.0 ou mais nova (`LoadBudget` no `DS2TexInject.ini`) e se o Pillow está instalado, e rode o `ds2tex.py` de novo para deixar todas as texturas prontas. Se ainda engasgar, baixe o `LoadBudget` para `2`. Parte do engasgo na primeira visita é o DXVK compilando shaders; deixe o pré-cache de shaders do Steam ligado e isso diminui conforme você joga. |
@@ -317,7 +320,7 @@ Você não precisa desta parte para usar o mod.
 **O que o DS2TexInject faz no lugar:**
 
 1. O ASI loader (MarkerPatch ou Ultimate ASI Loader) carrega o `DS2TexInject.asi` quando o jogo abre.
-2. O plugin intercepta o `Direct3DCreate9` dentro do `d3d9.dll` que o jogo estiver usando (ReShade ou DXVK). A partir daí ele intercepta os métodos de device e de textura do Direct3D 9.
+2. O plugin intercepta o `Direct3DCreate9` dentro do `d3d9.dll` que o jogo estiver usando (ReShade, DXVK ou o que vem com o Windows). A partir daí ele intercepta os métodos de device e de textura do Direct3D 9. No Direct3D do próprio Windows cada tipo de textura e de device é uma classe separada, com métodos próprios, então cada classe ganha os seus hooks. Só o device com que o jogo desenha recebe as substituições; devices de teste que overlays criam ficam de fora.
 3. Quando o jogo envia uma textura, o plugin calcula o mesmo **hash CRC32 que o TexMod usa** (sobre o maior nível de mipmap).
 4. Se existir `texmod/_cache/0x<hash>.dds` (ou `.png` / `.bmp`), o plugin carrega esse arquivo e desenha ele no lugar do original. As substituições só são carregadas quando aparecem e são liberadas quando o jogo deixa de usar.
 5. Muitos pacotes trazem DDS **sem mipmaps**, o que faz a textura cintilar e serrilhar de longe. O plugin gera os mipmaps que faltam na primeira vez que carrega o arquivo e salva a versão corrigida em `texmod/_cache/`.
@@ -333,9 +336,12 @@ Com o Pillow instalado (`sudo pacman -S python-pillow`), ele também deixa cada 
 
 ```sh
 ./build.sh      # gera dist/DS2TexInject.asi e dist/DS2TexInject-Setup.exe
+./test.sh       # obrigatório antes de um release: testa o plugin e os dois instaladores (precisa do wine)
 ```
 
 Ele usa o `mingw-w64-gcc` se estiver instalado. Se não estiver, baixa o [llvm-mingw](https://github.com/mstorsjo/llvm-mingw) em `~/.local/opt`. O plugin é o `src/ds2texinject.cpp`; o instalador do Windows é o `src/ds2setup.cpp` (uma versão em C++ do `ds2tex.py`, usando [stb_image e stb_dxt](https://github.com/nothings/stb), domínio público).
+
+O `test.sh` compila antes e roda o plugin num prefixo Wine limpo com um `d3d9.dll` falso que se comporta como o Direct3D nativo do Windows: texturas, superfícies e devices de tipos diferentes são classes diferentes, coisa que o DXVK e o Wine não têm. Cobre um device de overlay criado antes e depois do jogo, 8 threads criando texturas ao mesmo tempo, escrita pela superfície, `UpdateTexture`, `UpdateSurface` e `Reset`, com `Pool=managed`, `Pool=default` e com a pasta do jogo sem permissão de escrita. Depois instala os mesmos pacotes gerados com o `DS2TexInject-Setup.exe` (Windows, no Wine) e com o `install.sh` (Linux) e confere se os dois `_cache` batem entre si e com as imagens de origem. Passe arquivos `.tpf` de verdade como argumento para comparar esses também.
 
 ---
 
@@ -345,7 +351,7 @@ Ele usa o `mingw-w64-gcc` se estiver instalado. Se não estiver, baixa o [llvm-m
 - **[MarkerPatch](https://github.com/Wemino/MarkerPatch)**, do Wemino, e **[Ultimate ASI Loader](https://github.com/ThirteenAG/Ultimate-ASI-Loader)**, do ThirteenAG, que carregam o plugin.
 - A compatibilidade de hash segue o comportamento do **TexMod** e do **[uMod](https://code.google.com/archive/p/texmod/)**.
 
-**Testado em:** Arch Linux, GE-Proton 11, DXVK, ReShade 6.8 e MarkerPatch.
+**Testado em:** Arch Linux, GE-Proton 11, DXVK, ReShade 6.8 e MarkerPatch. O caminho do Windows é conferido pelo `test.sh` no Wine, com um `d3d9.dll` falso que se comporta como o do Windows.
 
 ## Licença
 

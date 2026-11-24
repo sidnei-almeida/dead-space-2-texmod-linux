@@ -2,17 +2,32 @@
 # release e executa. Uso (PowerShell):
 #   irm https://raw.githubusercontent.com/sidnei-almeida/dead-space-2-texmod-linux/main/install.ps1 | iex
 # O instalador acha a pasta do jogo sozinho; se nao achar, abre uma janela para escolher o deadspace2.exe.
+#
+# Tudo dentro de & { }: com "| iex" o script roda na sessao de quem chamou, e as preferencias abaixo
+# ficariam valendo no PowerShell da pessoa depois. O protocolo TLS e global do processo, entao volta
+# ao valor de antes no finally. Nada de "exit" aqui: fecharia a janela dela.
 
-$ErrorActionPreference = "Stop"
-$ProgressPreference = "SilentlyContinue"   # a barra de progresso deixa o Invoke-WebRequest muito lento
-[Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
+& {
+    $ErrorActionPreference = "Stop"
+    $ProgressPreference = "SilentlyContinue"   # a barra de progresso deixa o Invoke-WebRequest muito lento
+    $tlsAntes = [Net.ServicePointManager]::SecurityProtocol
+    try {
+        [Net.ServicePointManager]::SecurityProtocol = $tlsAntes -bor [Net.SecurityProtocolType]::Tls12
 
-$url = "https://github.com/sidnei-almeida/dead-space-2-texmod-linux/releases/latest/download/DS2TexInject-Setup.exe"
-$exe = Join-Path $env:TEMP "DS2TexInject-Setup.exe"
+        $url = "https://github.com/sidnei-almeida/dead-space-2-texmod-linux/releases/latest/download/DS2TexInject-Setup.exe"
+        $exe = Join-Path $env:TEMP "DS2TexInject-Setup.exe"
 
-Write-Host "Baixando / Downloading DS2TexInject-Setup.exe..."
-Invoke-WebRequest -Uri $url -OutFile $exe -UseBasicParsing
+        Write-Host "Baixando / Downloading DS2TexInject-Setup.exe..."
+        Invoke-WebRequest -Uri $url -OutFile $exe -UseBasicParsing
 
-$p = Start-Process -FilePath $exe -ArgumentList "--no-pause" -NoNewWindow -Wait -PassThru
-Remove-Item $exe -ErrorAction SilentlyContinue
-if ($p.ExitCode -ne 0) { Write-Host "O instalador terminou com erro / Installer failed ($($p.ExitCode))" -ForegroundColor Red }
+        $p = Start-Process -FilePath $exe -ArgumentList "--no-pause" -NoNewWindow -Wait -PassThru
+        Remove-Item $exe -ErrorAction SilentlyContinue
+        $global:LASTEXITCODE = $p.ExitCode
+        if ($p.ExitCode -ne 0) {
+            Write-Host "O instalador terminou com erro / Installer failed ($($p.ExitCode))" -ForegroundColor Red
+            throw "DS2TexInject-Setup.exe exit code $($p.ExitCode)"
+        }
+    } finally {
+        [Net.ServicePointManager]::SecurityProtocol = $tlsAntes
+    }
+}

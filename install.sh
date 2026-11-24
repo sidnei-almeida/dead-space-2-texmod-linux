@@ -34,7 +34,11 @@ done
 echo "Jogo: $GAME"
 
 ASI="$HERE/dist/DS2TexInject.asi"
-[ -f "$ASI" ] || "$HERE/build.sh"
+# Compila se nao houver build ou se o codigo for mais novo que ele (ex.: depois de um git pull),
+# para nunca instalar um plugin velho que ficou em dist/
+if [ ! -f "$ASI" ] || [ -n "$(find "$HERE/src" "$HERE/build.sh" -newer "$ASI" -print -quit)" ]; then
+    "$HERE/build.sh"
+fi
 
 if [ ! -f "$GAME/dinput8.dll" ]; then
     echo "Nenhum ASI loader (dinput8.dll) na pasta do jogo: sem ele o plugin nao e carregado."

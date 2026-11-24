@@ -54,7 +54,7 @@
 #define STB_DXT_IMPLEMENTATION
 #include "third_party/stb_dxt.h"
 
-#define DS2SETUP_VERSION "1.4.1"
+#define DS2SETUP_VERSION "1.5.0"
 #define MARKERPATCH_URL L"https://github.com/Wemino/MarkerPatch/releases/latest/download/MarkerPatch.zip"
 #define RES_ASI 101
 #define RES_INI 102
@@ -1162,7 +1162,8 @@ static int Run(int argc, wchar_t **argv)
         if (Elevated()) { Out(T("ERROR: cannot write to the game folder.\n", "ERRO: sem permissao para gravar na pasta do jogo.\n")); return 1; }
         Out(T("The game folder needs administrator rights. Continuing in a new window...\n",
               "A pasta do jogo precisa de permissao de administrador. Continuando em uma nova janela...\n"));
-        std::wstring args = L"\"" + game + L"\"";
+        // CommandLineToArgvW le \" como aspas literais: a raiz de um disco ("D:\") precisa ir como "D:\\"
+        std::wstring args = L"\"" + game + (game.back() == L'\\' ? L"\\" : L"") + L"\"";
         if (g_yes) args += L" --yes";
         if (rebuild) args += L" --rebuild";
         SHELLEXECUTEINFOW sei = {sizeof sei};

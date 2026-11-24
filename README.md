@@ -30,7 +30,7 @@ Dead Space 2 has great HD texture mods: 4K suits, weapons, and more. They come a
 
 ## Windows
 
-On Windows there is an `.exe` installer that does everything. No Python and no launch options needed.
+On Windows there is an `.exe` installer that does everything. No Python and no launch options needed. Requires Windows 10 or 11.
 
 1. Create a **`texmod`** folder inside the game folder and put your `.tpf` and `.zip` packs there (see [Step 3](#step-3-get-the-texture-packs)).
 2. Run the installer in **one** of these ways:
@@ -56,7 +56,7 @@ The installer:
 - installs `plugins\DS2TexInject.asi` and `DS2TexInject.ini`;
 - prepares every pack in `texmod\` into `texmod\_cache\`, including big zips such as a multi-GB remaster. If nothing changed since last time, it skips this step.
 
-Added or removed packs? Run the installer again. To redo the textures from scratch: `DS2TexInject-Setup.exe --rebuild`. To give the game folder yourself: `DS2TexInject-Setup.exe "D:\Games\Dead Space 2"`.
+Added or removed packs, or want the latest version? Run the installer again. To redo the textures from scratch: `DS2TexInject-Setup.exe --rebuild`. To give the game folder yourself: `DS2TexInject-Setup.exe "D:\Games\Dead Space 2"`.
 
 > Windows SmartScreen may warn that the `.exe` is unsigned. Click **More info → Run anyway**. The source is in `src/ds2setup.cpp`.
 
@@ -185,6 +185,8 @@ You can also give it the game folder directly:
 ./install.sh "/path/to/Dead Space 2"
 ```
 
+To update later, run `git pull` and then `./install.sh` again. It rebuilds the plugin when the code changed and keeps your textures.
+
 At the end you should see:
 
 ```
@@ -214,7 +216,7 @@ The installer's messages are in Portuguese. The last line means *"No broken text
 Launch Dead Space 2 from Steam as usual.
 
 - Press **F10** in-game to turn the new textures **on and off**, so you can see the difference.
-- To check that it is working, open `Dead Space 2/DS2TexInject.log`. Each `MATCH` line is a texture being replaced.
+- To check that it is working, open `Dead Space 2/DS2TexInject.log`. Each `MATCH` line is a texture being replaced. On Windows, if the game is in a protected folder such as `C:\Program Files` (EA app), the log goes to `%LOCALAPPDATA%\DS2TexInject\DS2TexInject.log` instead.
 
 Textures are swapped as they appear on screen. Suits and weapons show up once you get them in the game.
 
@@ -294,7 +296,8 @@ The file is in the game folder. You can open it with any text editor.
 
 | Problem | Solution |
 |---|---|
-| **No `DS2TexInject.log` file appears** | The plugin isn't loading. Check that `dinput8.dll` (your ASI loader) is in the game folder, that `plugins/DS2TexInject.asi` exists, and that the launch option from Step 2 is set. |
+| **Windows: nothing changes, F10 does nothing and there is no log** | Update to v1.5.0 or newer: run the installer again. The v1.4.1 plugin needed a file that Windows doesn't have, so Windows refused to load it. |
+| **No `DS2TexInject.log` file appears** | On Windows, look in `%LOCALAPPDATA%\DS2TexInject\` first: when the game folder is protected (`C:\Program Files`), the log goes there. If it isn't there either, the plugin isn't loading. Check that `dinput8.dll` (your ASI loader) is in the game folder, that `plugins/DS2TexInject.asi` exists, and that the launch option from Step 2 is set. |
 | **The log has no `MATCH` lines** | Make sure you ran `ds2tex.py` and that `texmod/_cache/` has files in it. Also play a bit: suits and weapons only appear later in the game. |
 | **The game crashes after playing a while** | Dead Space 2 is a 32-bit game and can run out of memory with many 4K textures. Set `Pool=default` in `DS2TexInject.ini`, or remove some packs. |
 | **The game stutters when entering new areas** | Make sure you're on v1.3.0 or newer (`LoadBudget` in `DS2TexInject.ini`) and that Pillow is installed, then run `ds2tex.py` again so every texture is game-ready. If it still stutters, lower `LoadBudget` to `2`. Part of the first-visit stutter is DXVK compiling shaders; keep Steam's shader pre-caching on and it fades as you play. |
@@ -319,7 +322,7 @@ You don't need this section to use the mod.
 **What DS2TexInject does instead:**
 
 1. The ASI loader (MarkerPatch or Ultimate ASI Loader) loads `DS2TexInject.asi` when the game starts.
-2. The plugin hooks `Direct3DCreate9` inside whichever `d3d9.dll` the game uses (ReShade or DXVK). From there it hooks the Direct3D 9 device and texture methods.
+2. The plugin hooks `Direct3DCreate9` inside whichever `d3d9.dll` the game uses (ReShade, DXVK or the one that comes with Windows). From there it hooks the Direct3D 9 device and texture methods. On Windows' own Direct3D every kind of texture and device is a separate class with its own methods, so each class gets its own hooks. Only the device the game draws with gets replacements; test devices that overlays create are left alone.
 3. When the game uploads a texture, the plugin computes the same **CRC32 hash TexMod uses** (on the top mip level).
 4. If `texmod/_cache/0x<hash>.dds` (or `.png` / `.bmp`) exists, the plugin loads it and draws it instead of the original. Replacements are loaded only when needed and freed when the game stops using them.
 5. Many packs ship DDS files **without mipmaps**, which makes textures shimmer and look jagged from a distance. The plugin generates the missing mipmaps the first time it loads such a file and saves the fixed file back to `texmod/_cache/`.
@@ -335,9 +338,12 @@ With Pillow installed (`sudo pacman -S python-pillow`), it also makes every text
 
 ```sh
 ./build.sh      # creates dist/DS2TexInject.asi and dist/DS2TexInject-Setup.exe
+./test.sh       # required before a release: tests the plugin and both installers (needs wine)
 ```
 
 It uses `mingw-w64-gcc` if installed. If not, it downloads [llvm-mingw](https://github.com/mstorsjo/llvm-mingw) into `~/.local/opt`. The plugin is `src/ds2texinject.cpp`; the Windows installer is `src/ds2setup.cpp` (a C++ port of `ds2tex.py`, using [stb_image and stb_dxt](https://github.com/nothings/stb), public domain).
+
+`test.sh` builds first, then runs the plugin in a clean Wine prefix with a fake `d3d9.dll` that behaves like native Windows Direct3D: textures, surfaces and devices of different kinds are different classes, which DXVK and Wine don't have. It covers an overlay device created before and after the game, 8 threads creating textures at once, writes through surfaces, `UpdateTexture`, `UpdateSurface` and `Reset`, with `Pool=managed`, `Pool=default` and a read-only game folder. Then it installs the same generated packs with `DS2TexInject-Setup.exe` (Windows, in Wine) and with `install.sh` (Linux), and checks that both `_cache` folders match each other and the source images. Pass real `.tpf` files as arguments to compare those too.
 
 ---
 
@@ -347,7 +353,7 @@ It uses `mingw-w64-gcc` if installed. If not, it downloads [llvm-mingw](https://
 - **[MarkerPatch](https://github.com/Wemino/MarkerPatch)** by Wemino and **[Ultimate ASI Loader](https://github.com/ThirteenAG/Ultimate-ASI-Loader)** by ThirteenAG, which load the plugin.
 - Hash compatibility follows the behavior of **TexMod** and **[uMod](https://code.google.com/archive/p/texmod/)**.
 
-**Tested on:** Arch Linux, GE-Proton 11, DXVK, ReShade 6.8, MarkerPatch.
+**Tested on:** Arch Linux, GE-Proton 11, DXVK, ReShade 6.8, MarkerPatch. The Windows path is checked with `test.sh` in Wine, using a fake `d3d9.dll` that behaves like the Windows one.
 
 ## License
 

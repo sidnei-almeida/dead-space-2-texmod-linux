@@ -21,7 +21,7 @@
 #include <unordered_set>
 #include <vector>
 
-#define DS2TI_VERSION "1.4.1"
+#define DS2TI_VERSION "1.5.0"
 
 // ---------------------------------------------------------------- config/log
 
@@ -119,51 +119,182 @@ static bool IsBlockFormat(D3DFORMAT f)
            f == (D3DFORMAT)MAKEFOURCC('A', 'T', 'I', '1') || f == (D3DFORMAT)MAKEFOURCC('A', 'T', 'I', '2');
 }
 
-// ---------------------------------------------------------------- vtable hooks
+// ---------------------------------------------------------------- hooks por slot de vtable
+// No d3d9.dll nativo do Windows cada pool de textura e cada tipo de device e uma classe C++ propria,
+// com vtable e metodos proprios (MANAGED/SYSTEMMEM x DEFAULT, HAL x NULLREF...); DXVK e Wine usam
+// uma classe so. Chamar o LockRect de uma classe num objeto de outra corrompe memoria ou derruba o
+// jogo. Por isso cada slot de vtable trocado guarda o proprio original, e toda chamada a um original
+// parte do slot da vtable do proprio objeto. A entrada e publicada antes de o slot ser trocado, entao
+// quem ve o nosso hook num slot sempre acha a entrada dele.
 
-template <class T> static void HookVtbl(void *obj, size_t offset, T hook, T *orig)
-{
-    void **vtbl = *(void ***)obj;
-    void **slot = (void **)((char *)vtbl + offset);
-    if (*slot == (void *)hook) return;  // ja instalado
-    DWORD old;
-    VirtualProtect(slot, sizeof(void *), PAGE_EXECUTE_READWRITE, &old);
-    *orig = (T)*slot;
-    *slot = (void *)hook;
-    VirtualProtect(slot, sizeof(void *), old, &old);
-}
 #define VT(iface, method) offsetof(iface##Vtbl, method)
 
 typedef IDirect3D9 *(WINAPI *Direct3DCreate9_t)(UINT);
-typedef HRESULT(STDMETHODCALLTYPE *CreateDevice_t)(IDirect3D9 *, UINT, D3DDEVTYPE, HWND, DWORD, D3DPRESENT_PARAMETERS *, IDirect3DDevice9 **);
-typedef HRESULT(STDMETHODCALLTYPE *CreateTexture_t)(IDirect3DDevice9 *, UINT, UINT, UINT, DWORD, D3DFORMAT, D3DPOOL, IDirect3DTexture9 **, HANDLE *);
-typedef HRESULT(STDMETHODCALLTYPE *SetTexture_t)(IDirect3DDevice9 *, DWORD, IDirect3DBaseTexture9 *);
-typedef HRESULT(STDMETHODCALLTYPE *UpdateTexture_t)(IDirect3DDevice9 *, IDirect3DBaseTexture9 *, IDirect3DBaseTexture9 *);
-typedef HRESULT(STDMETHODCALLTYPE *UpdateSurface_t)(IDirect3DDevice9 *, IDirect3DSurface9 *, const RECT *, IDirect3DSurface9 *, const POINT *);
-typedef HRESULT(STDMETHODCALLTYPE *Reset_t)(IDirect3DDevice9 *, D3DPRESENT_PARAMETERS *);
-typedef HRESULT(STDMETHODCALLTYPE *EndScene_t)(IDirect3DDevice9 *);
-typedef HRESULT(STDMETHODCALLTYPE *TexLockRect_t)(IDirect3DTexture9 *, UINT, D3DLOCKED_RECT *, const RECT *, DWORD);
-typedef HRESULT(STDMETHODCALLTYPE *TexUnlockRect_t)(IDirect3DTexture9 *, UINT);
-typedef ULONG(STDMETHODCALLTYPE *Release_t)(IDirect3DTexture9 *);
-typedef HRESULT(STDMETHODCALLTYPE *SurfUnlockRect_t)(IDirect3DSurface9 *);
-
 static Direct3DCreate9_t o_Direct3DCreate9;
-static CreateDevice_t o_CreateDevice;
-static CreateTexture_t o_CreateTexture;
-static SetTexture_t o_SetTexture;
-static UpdateTexture_t o_UpdateTexture;
-static UpdateSurface_t o_UpdateSurface;
-static Reset_t o_Reset;
-static EndScene_t o_EndScene;
-static TexLockRect_t o_TexLockRect;
-static TexUnlockRect_t o_TexUnlockRect;
-static Release_t o_TexRelease;
-static SurfUnlockRect_t o_SurfUnlockRect;
+
+struct SlotOrig { void **slot; void *orig; size_t off; void *hook; };
+static const LONG kMaxSlots = 256;
+static SlotOrig g_slots[kMaxSlots];
+static volatile LONG g_slotN;             // entradas publicadas; leitura sem trava
+static SRWLOCK g_hookLock = SRWLOCK_INIT; // so quem instala hooks
+
+static void **SlotOf(void *obj, size_t off) { return (void **)((char *)*(void ***)obj + off); }
+
+static void WarnOnce(volatile LONG *flag, const char *msg)
+{
+    if (!InterlockedExchange(flag, 1)) Log("%s", msg);
+}
+
+static void *FindSlot(void **slot)
+{
+    LONG n = __atomic_load_n(&g_slotN, __ATOMIC_ACQUIRE); // no x86 e um mov simples
+    for (LONG i = 0; i < n; i++)
+        if (g_slots[i].slot == slot) return g_slots[i].orig;
+    return nullptr;
+}
+
+// Objeto cuja vtable nao e de nenhuma classe hookada, mas tem o nosso hook dentro: outro mod copiou
+// uma vtable ja hookada. O original vem da classe de origem da copia: a unica com esse metodo hookado,
+// ou a que tem o mesmo QueryInterface (slot 0, que nunca trocamos). Sem como saber: nullptr.
+static void *OrigFromCopy(void *obj, size_t off, void *hook)
+{
+    void *qi = (*(void ***)obj)[0];
+    void *any = nullptr, *same = nullptr;
+    int nAny = 0, nSame = 0;
+    LONG n = __atomic_load_n(&g_slotN, __ATOMIC_ACQUIRE);
+    for (LONG i = 0; i < n; i++) {
+        const SlotOrig &e = g_slots[i];
+        if (e.off != off || e.hook != hook) continue;
+        any = e.orig; nAny++;
+        if (*(void **)((char *)e.slot - off) == qi) { same = e.orig; nSame++; }
+    }
+    if (nSame == 1) return same;
+    if (nAny == 1) return any;
+    static volatile LONG warned;
+    WarnOnce(&warned, "AVISO: metodo sem original conhecido (vtable copiada por outro mod), chamada ignorada");
+    return nullptr;
+}
+
+// Original do metodo para a classe deste objeto. Slot que nao e nosso: o conteudo dele e o original.
+static void *Orig(void *obj, size_t off, void *hook)
+{
+    void **slot = SlotOf(obj, off);
+    if (void *o = FindSlot(slot)) return o;
+    void *fn = *(void *volatile *)slot;
+    if (fn != hook) return fn;
+    if (void *o = FindSlot(slot)) return o; // outra thread acabou de instalar: a entrada ja esta publicada
+    return OrigFromCopy(obj, off, hook);
+}
+
+// Chama o original do metodo para a classe do objeto. Se o mesmo objeto voltar aqui pela mesma thread
+// enquanto o original roda, outro mod copiou a vtable e o "original" do slot dele chama o nosso hook
+// de novo: na segunda vez usa o original da classe de origem, em vez de entrar em recursao infinita.
+#define CALL_ORIG(failval, obj, iface, method, hook, ...)                                                 \
+    do {                                                                                                   \
+        static thread_local void *inside;                                                                  \
+        void *o_ = inside == (void *)(obj) ? OrigFromCopy((obj), VT(iface, method), (void *)(hook))        \
+                                           : Orig((obj), VT(iface, method), (void *)(hook));               \
+        if (!o_) return failval;                                                                           \
+        void *prev_ = inside;                                                                              \
+        inside = (void *)(obj);                                                                            \
+        auto r_ = ((decltype(&hook))o_)(__VA_ARGS__);                                                      \
+        inside = prev_;                                                                                    \
+        return r_;                                                                                         \
+    } while (0)
+
+// Troca o slot pelo hook, uma vez por slot. 2 = trocou agora, 1 = ja era nosso, 0 = nao deu.
+static int HookSlot(void *obj, size_t off, void *hook)
+{
+    void **slot = SlotOf(obj, off);
+    if (*(void *volatile *)slot == hook) return 1; // ja trocado (e a entrada veio antes)
+    int r = 0;
+    AcquireSRWLockExclusive(&g_hookLock);
+    LONG n = g_slotN;
+    void *orig = *slot;
+    if (FindSlot(slot)) r = 1; // nosso, com outro hook por cima: nao mexe
+    else if (orig != hook && n < kMaxSlots) {
+        g_slots[n] = {slot, orig, off, hook};
+        InterlockedExchange(&g_slotN, n + 1); // publica a entrada antes de trocar o slot
+        DWORD old;
+        VirtualProtect(slot, sizeof(void *), PAGE_EXECUTE_READWRITE, &old);
+        InterlockedExchangePointer(slot, hook);
+        VirtualProtect(slot, sizeof(void *), old, &old);
+        r = 2;
+    }
+    ReleaseSRWLockExclusive(&g_hookLock);
+    if (!r) {
+        static volatile LONG warned;
+        WarnOnce(&warned, "AVISO: nao deu para instalar um hook (vtable copiada ou slots esgotados)");
+    }
+    return r;
+}
+
+static HRESULT STDMETHODCALLTYPE H_CreateDevice(IDirect3D9 *, UINT, D3DDEVTYPE, HWND, DWORD, D3DPRESENT_PARAMETERS *, IDirect3DDevice9 **);
+static HRESULT STDMETHODCALLTYPE H_CreateTexture(IDirect3DDevice9 *, UINT, UINT, UINT, DWORD, D3DFORMAT, D3DPOOL, IDirect3DTexture9 **, HANDLE *);
+static HRESULT STDMETHODCALLTYPE H_SetTexture(IDirect3DDevice9 *, DWORD, IDirect3DBaseTexture9 *);
+static HRESULT STDMETHODCALLTYPE H_UpdateTexture(IDirect3DDevice9 *, IDirect3DBaseTexture9 *, IDirect3DBaseTexture9 *);
+static HRESULT STDMETHODCALLTYPE H_UpdateSurface(IDirect3DDevice9 *, IDirect3DSurface9 *, const RECT *, IDirect3DSurface9 *, const POINT *);
+static HRESULT STDMETHODCALLTYPE H_Reset(IDirect3DDevice9 *, D3DPRESENT_PARAMETERS *);
+static HRESULT STDMETHODCALLTYPE H_EndScene(IDirect3DDevice9 *);
+static HRESULT STDMETHODCALLTYPE H_TexLockRect(IDirect3DTexture9 *, UINT, D3DLOCKED_RECT *, const RECT *, DWORD);
+static HRESULT STDMETHODCALLTYPE H_TexUnlockRect(IDirect3DTexture9 *, UINT);
+static ULONG STDMETHODCALLTYPE H_TexRelease(IDirect3DTexture9 *);
+static HRESULT STDMETHODCALLTYPE H_SurfUnlockRect(IDirect3DSurface9 *);
+static void HookTextureClass(IDirect3DTexture9 *t, D3DPOOL pool);
+
+// Chamadas aos originais, sempre pela classe do objeto
+static HRESULT D3DCreateDevice(IDirect3D9 *d3d, UINT a, D3DDEVTYPE t, HWND w, DWORD f, D3DPRESENT_PARAMETERS *pp, IDirect3DDevice9 **out)
+{
+    CALL_ORIG(D3DERR_INVALIDCALL, d3d, IDirect3D9, CreateDevice, H_CreateDevice, d3d, a, t, w, f, pp, out);
+}
+static HRESULT DevCreateTexture(IDirect3DDevice9 *d, UINT w, UINT h, UINT lv, DWORD usage, D3DFORMAT fmt, D3DPOOL pool,
+                                IDirect3DTexture9 **out, HANDLE *sh)
+{
+    CALL_ORIG(D3DERR_INVALIDCALL, d, IDirect3DDevice9, CreateTexture, H_CreateTexture, d, w, h, lv, usage, fmt, pool, out, sh);
+}
+static HRESULT DevSetTexture(IDirect3DDevice9 *d, DWORD stage, IDirect3DBaseTexture9 *t)
+{
+    CALL_ORIG(D3DERR_INVALIDCALL, d, IDirect3DDevice9, SetTexture, H_SetTexture, d, stage, t);
+}
+static HRESULT DevUpdateTexture(IDirect3DDevice9 *d, IDirect3DBaseTexture9 *src, IDirect3DBaseTexture9 *dst)
+{
+    CALL_ORIG(D3DERR_INVALIDCALL, d, IDirect3DDevice9, UpdateTexture, H_UpdateTexture, d, src, dst);
+}
+static HRESULT DevUpdateSurface(IDirect3DDevice9 *d, IDirect3DSurface9 *src, const RECT *rc, IDirect3DSurface9 *dst, const POINT *pt)
+{
+    CALL_ORIG(D3DERR_INVALIDCALL, d, IDirect3DDevice9, UpdateSurface, H_UpdateSurface, d, src, rc, dst, pt);
+}
+static HRESULT DevReset(IDirect3DDevice9 *d, D3DPRESENT_PARAMETERS *pp)
+{
+    CALL_ORIG(D3DERR_INVALIDCALL, d, IDirect3DDevice9, Reset, H_Reset, d, pp);
+}
+static HRESULT DevEndScene(IDirect3DDevice9 *d)
+{
+    CALL_ORIG(D3DERR_INVALIDCALL, d, IDirect3DDevice9, EndScene, H_EndScene, d);
+}
+static HRESULT TexLock(IDirect3DTexture9 *t, UINT l, D3DLOCKED_RECT *lr, const RECT *rc, DWORD f)
+{
+    CALL_ORIG(D3DERR_INVALIDCALL, t, IDirect3DTexture9, LockRect, H_TexLockRect, t, l, lr, rc, f);
+}
+static HRESULT TexUnlock(IDirect3DTexture9 *t, UINT l)
+{
+    CALL_ORIG(D3DERR_INVALIDCALL, t, IDirect3DTexture9, UnlockRect, H_TexUnlockRect, t, l);
+}
+static ULONG TexRelease(IDirect3DTexture9 *t)
+{
+    // sem original: vaza a referencia em vez de chamar o metodo de outra classe (1 = "ainda viva")
+    CALL_ORIG(1, t, IDirect3DTexture9, Release, H_TexRelease, t);
+}
+static HRESULT SurfUnlock(IDirect3DSurface9 *s)
+{
+    CALL_ORIG(D3DERR_INVALIDCALL, s, IDirect3DSurface9, UnlockRect, H_SurfUnlockRect, s);
+}
 
 // ---------------------------------------------------------------- estado
 
 struct Replacement {
     IDirect3DTexture9 *tex = nullptr;
+    IDirect3DDevice9 *dev = nullptr; // device onde tex foi criada (textura nao vale em outro device)
     int users = 0;
     bool failed = false;
 };
@@ -189,7 +320,9 @@ static std::unordered_map<IDirect3DTexture9 *, TexInfo> g_tex;
 static std::unordered_map<uint32_t, Replacement> g_rep;
 static std::unordered_map<uint32_t, std::wstring> g_files; // hash -> caminho
 static std::unordered_set<uint32_t> g_dumped;
-static IDirect3DDevice9 *g_device;
+// Device do jogo: o ultimo que chamou EndScene. So ele recebe substituicoes; devices de teste que
+// overlays criam (e soltam) nunca desenham, entao passam direto e nao seguram textura nenhuma.
+static IDirect3DDevice9 *volatile g_device;
 static thread_local int t_internal; // >0 enquanto nos mesmos criamos/lemos texturas
 static volatile LONG g_statHashed, g_statMatched, g_statLoaded;
 
@@ -242,9 +375,9 @@ static bool FillLevels(IDirect3DTexture9 *t, D3DFORMAT fmt, UINT w, UINT h, UINT
         UINT rowBytes = block ? ((lw + 3) / 4) * (bpp * 2) : lw * bpp / 8;
         if ((size_t)rows * rowBytes > avail) return false;
         D3DLOCKED_RECT lr;
-        if (FAILED(o_TexLockRect(t, l, &lr, nullptr, 0))) return false;
+        if (FAILED(TexLock(t, l, &lr, nullptr, 0))) return false;
         for (UINT r = 0; r < rows; r++) memcpy((uint8_t *)lr.pBits + (size_t)r * lr.Pitch, src + (size_t)r * rowBytes, rowBytes);
-        o_TexUnlockRect(t, l);
+        TexUnlock(t, l);
         src += (size_t)rows * rowBytes;
         avail -= (size_t)rows * rowBytes;
     }
@@ -470,19 +603,25 @@ static IDirect3DTexture9 *LoadDDS(IDirect3DDevice9 *dev, std::vector<uint8_t> &d
 
     IDirect3DTexture9 *t = nullptr;
     if (g_pool == D3DPOOL_MANAGED) {
-        if (FAILED(o_CreateTexture(dev, w, h, mips, 0, fmt, D3DPOOL_MANAGED, &t, nullptr))) return nullptr;
-        if (!FillLevels(t, fmt, w, h, mips, d.data() + 128, d.size() - 128)) { o_TexRelease(t); return nullptr; }
+        if (FAILED(DevCreateTexture(dev, w, h, mips, 0, fmt, D3DPOOL_MANAGED, &t, nullptr))) return nullptr;
+        HookTextureClass(t, D3DPOOL_MANAGED);
+        if (!FillLevels(t, fmt, w, h, mips, d.data() + 128, d.size() - 128)) { TexRelease(t); return nullptr; }
         return t;
     }
     IDirect3DTexture9 *stage = nullptr;
-    if (FAILED(o_CreateTexture(dev, w, h, mips, 0, fmt, D3DPOOL_SYSTEMMEM, &stage, nullptr))) return nullptr;
-    if (!FillLevels(stage, fmt, w, h, mips, d.data() + 128, d.size() - 128) ||
-        FAILED(o_CreateTexture(dev, w, h, mips, 0, fmt, D3DPOOL_DEFAULT, &t, nullptr)) ||
-        FAILED(o_UpdateTexture(dev, (IDirect3DBaseTexture9 *)stage, (IDirect3DBaseTexture9 *)t))) {
-        if (t) o_TexRelease(t);
+    if (FAILED(DevCreateTexture(dev, w, h, mips, 0, fmt, D3DPOOL_SYSTEMMEM, &stage, nullptr))) return nullptr;
+    HookTextureClass(stage, D3DPOOL_SYSTEMMEM);
+    bool ok = FillLevels(stage, fmt, w, h, mips, d.data() + 128, d.size() - 128) &&
+              SUCCEEDED(DevCreateTexture(dev, w, h, mips, 0, fmt, D3DPOOL_DEFAULT, &t, nullptr));
+    if (ok) {
+        HookTextureClass(t, D3DPOOL_DEFAULT);
+        ok = SUCCEEDED(DevUpdateTexture(dev, (IDirect3DBaseTexture9 *)stage, (IDirect3DBaseTexture9 *)t));
+    }
+    if (!ok) {
+        if (t) TexRelease(t);
         t = nullptr;
     }
-    o_TexRelease(stage);
+    TexRelease(stage);
     return t;
 }
 
@@ -562,21 +701,26 @@ static void BudgetSpend(double ms)
 static void ReleaseInternal(IDirect3DTexture9 *t)
 {
     if (!t) return;
-    t_internal++; o_TexRelease(t); t_internal--;
+    t_internal++; TexRelease(t); t_internal--;
 }
 
 static IDirect3DTexture9 *AcquireReplacement(IDirect3DDevice9 *dev, uint32_t hash)
 {
     std::wstring path;
+    IDirect3DTexture9 *stale = nullptr;
     {
         WLock l;
         auto it = g_rep.find(hash);
         if (it == g_rep.end() || it->second.users <= 0 || it->second.failed) return nullptr;
-        if (it->second.tex) { IDirect3DTexture9_AddRef(it->second.tex); return it->second.tex; }
+        if (it->second.tex && it->second.dev == dev) { IDirect3DTexture9_AddRef(it->second.tex); return it->second.tex; }
+        stale = it->second.tex; // carregada em outro device: recarrega neste
+        it->second.tex = nullptr;
         auto f = g_files.find(hash);
-        if (f == g_files.end()) { it->second.failed = true; return nullptr; }
-        path = f->second;
+        if (f == g_files.end()) it->second.failed = true;
+        else path = f->second;
     }
+    ReleaseInternal(stale);
+    if (path.empty()) return nullptr;
     if (!BudgetAllows()) { InterlockedIncrement(&g_statDeferred); return nullptr; }
     double t0 = NowMs();
     IDirect3DTexture9 *t = LoadReplacementFile(dev, hash, path);
@@ -588,14 +732,16 @@ static IDirect3DTexture9 *AcquireReplacement(IDirect3DDevice9 *dev, uint32_t has
         auto it = g_rep.find(hash);
         if (it == g_rep.end() || it->second.users <= 0) {
             extra = t; // ninguem mais usa esse hash: descarta
-        } else if (it->second.tex) {
+        } else if (it->second.tex && it->second.dev == dev) {
             extra = t; // outra thread carregou primeiro
             ret = it->second.tex;
             IDirect3DTexture9_AddRef(ret);
         } else if (!t) {
             it->second.failed = true;
         } else {
+            extra = it->second.tex; // nullptr, ou a de outro device carregada nesse meio tempo
             it->second.tex = t;
+            it->second.dev = dev;
             ret = t;
             IDirect3DTexture9_AddRef(ret);
         }
@@ -692,7 +838,7 @@ static void AssignHash(IDirect3DTexture9 *tex, uint32_t hash)
             (unsigned)copy.fmt, copy.levels, (int)copy.pool);
     if (want) {
         InterlockedIncrement(&g_statMatched);
-        if (g_device) ReleaseInternal(AcquireReplacement(g_device, hash));
+        if (IDirect3DDevice9 *dev = g_device) ReleaseInternal(AcquireReplacement(dev, hash));
     }
 }
 
@@ -703,10 +849,10 @@ static void LazyHash(IDirect3DTexture9 *tex, const TexInfo &ti)
     HRESULT hr;
     if (!Hashable(ti) || (ti.pool == D3DPOOL_DEFAULT && !(ti.usage & D3DUSAGE_DYNAMIC))) goto fail; // nao bloqueavel
     t_internal++;
-    hr = o_TexLockRect(tex, 0, &lr, nullptr, D3DLOCK_READONLY | D3DLOCK_NOSYSLOCK);
+    hr = TexLock(tex, 0, &lr, nullptr, D3DLOCK_READONLY | D3DLOCK_NOSYSLOCK);
     if (SUCCEEDED(hr)) {
         uint32_t h = HashBits(ti, (const uint8_t *)lr.pBits, lr.Pitch);
-        o_TexUnlockRect(tex, 0);
+        TexUnlock(tex, 0);
         t_internal--;
         AssignHash(tex, h);
         return;
@@ -722,7 +868,7 @@ fail:
 
 static HRESULT STDMETHODCALLTYPE H_TexLockRect(IDirect3DTexture9 *t, UINT level, D3DLOCKED_RECT *lr, const RECT *rc, DWORD flags)
 {
-    HRESULT hr = o_TexLockRect(t, level, lr, rc, flags);
+    HRESULT hr = TexLock(t, level, lr, rc, flags);
     if (t_internal || level != 0 || FAILED(hr) || (flags & D3DLOCK_READONLY)) return hr;
     WLock l;
     auto it = g_tex.find(t);
@@ -749,17 +895,17 @@ static HRESULT STDMETHODCALLTYPE H_TexUnlockRect(IDirect3DTexture9 *t, UINT leve
         }
         if (doHash) {
             uint32_t h = HashBits(ti, (const uint8_t *)ti.lockBits, ti.lockPitch);
-            HRESULT hr = o_TexUnlockRect(t, level);
+            HRESULT hr = TexUnlock(t, level);
             AssignHash(t, h);
             return hr;
         }
     }
-    return o_TexUnlockRect(t, level);
+    return TexUnlock(t, level);
 }
 
 static ULONG STDMETHODCALLTYPE H_TexRelease(IDirect3DTexture9 *t)
 {
-    ULONG r = o_TexRelease(t);
+    ULONG r = TexRelease(t);
     if (r == 0 && !t_internal) {
         IDirect3DTexture9 *drop = nullptr;
         {
@@ -780,7 +926,7 @@ static ULONG STDMETHODCALLTYPE H_TexRelease(IDirect3DTexture9 *t)
 
 static HRESULT STDMETHODCALLTYPE H_SurfUnlockRect(IDirect3DSurface9 *s)
 {
-    HRESULT hr = o_SurfUnlockRect(s);
+    HRESULT hr = SurfUnlock(s);
     if (t_internal) return hr;
     // escrita direta via superficie: marca a textura dona como "suja"
     // (so o nivel 0 entra no hash; mipmaps menores sao ignorados)
@@ -799,28 +945,31 @@ static HRESULT STDMETHODCALLTYPE H_SurfUnlockRect(IDirect3DSurface9 *s)
 
 // ---------------------------------------------------------------- hooks: device
 
-static void HookTextureVtbl(IDirect3DTexture9 *t)
+// Hooks na classe desta textura e na da superficie do nivel 0 (cada uma pode ser de uma classe
+// diferente, ate dentro do mesmo pool). Rapido quando ja esta tudo trocado.
+static void HookTextureClass(IDirect3DTexture9 *t, D3DPOOL pool)
 {
-    static bool done;
-    if (done) return;
-    done = true;
-    HookVtbl(t, VT(IDirect3DTexture9, LockRect), H_TexLockRect, &o_TexLockRect);
-    HookVtbl(t, VT(IDirect3DTexture9, UnlockRect), H_TexUnlockRect, &o_TexUnlockRect);
-    HookVtbl(t, VT(IDirect3DTexture9, Release), H_TexRelease, &o_TexRelease);
+    int a = HookSlot(t, VT(IDirect3DTexture9, LockRect), (void *)H_TexLockRect);
+    int b = HookSlot(t, VT(IDirect3DTexture9, UnlockRect), (void *)H_TexUnlockRect);
+    int c = HookSlot(t, VT(IDirect3DTexture9, Release), (void *)H_TexRelease);
+    if (a == 2 || b == 2 || c == 2) Log("hooks de textura instalados (pool=%d, vtable=%p)", (int)pool, (void *)*(void ***)t);
     IDirect3DSurface9 *s = nullptr;
+    t_internal++;
     if (SUCCEEDED(IDirect3DTexture9_GetSurfaceLevel(t, 0, &s)) && s) {
-        HookVtbl(s, VT(IDirect3DSurface9, UnlockRect), H_SurfUnlockRect, &o_SurfUnlockRect);
+        if (HookSlot(s, VT(IDirect3DSurface9, UnlockRect), (void *)H_SurfUnlockRect) == 2)
+            Log("hook de superficie instalado (pool=%d, vtable=%p)", (int)pool, (void *)*(void ***)s);
         IDirect3DSurface9_Release(s);
     }
-    Log("hooks de textura instalados");
+    t_internal--;
 }
 
 static HRESULT STDMETHODCALLTYPE H_CreateTexture(IDirect3DDevice9 *d, UINT w, UINT h, UINT levels, DWORD usage, D3DFORMAT fmt,
                                                  D3DPOOL pool, IDirect3DTexture9 **out, HANDLE *sh)
 {
-    HRESULT hr = o_CreateTexture(d, w, h, levels, usage, fmt, pool, out, sh);
-    if (FAILED(hr) || !out || !*out || t_internal) return hr;
-    if (!o_TexLockRect) { t_internal++; HookTextureVtbl(*out); t_internal--; }
+    HRESULT hr = DevCreateTexture(d, w, h, levels, usage, fmt, pool, out, sh);
+    if (FAILED(hr) || !out || !*out) return hr;
+    HookTextureClass(*out, pool);
+    if (t_internal) return hr;
     TexInfo ti;
     ti.w = w; ti.h = h; ti.levels = levels; ti.fmt = fmt; ti.pool = pool; ti.usage = usage;
     if (!Hashable(ti)) return hr;
@@ -840,13 +989,13 @@ static HRESULT STDMETHODCALLTYPE H_CreateTexture(IDirect3DDevice9 *d, UINT w, UI
 
 static HRESULT STDMETHODCALLTYPE H_SetTexture(IDirect3DDevice9 *d, DWORD stage, IDirect3DBaseTexture9 *bt)
 {
-    if (!bt || !g_enabled || t_internal) return o_SetTexture(d, stage, bt);
+    if (!bt || !g_enabled || t_internal || d != g_device) return DevSetTexture(d, stage, bt);
     IDirect3DTexture9 *t = (IDirect3DTexture9 *)bt;
     TexInfo ti;
     {
         AcquireSRWLockShared(&g_lock);
         auto it = g_tex.find(t);
-        if (it == g_tex.end()) { ReleaseSRWLockShared(&g_lock); return o_SetTexture(d, stage, bt); }
+        if (it == g_tex.end()) { ReleaseSRWLockShared(&g_lock); return DevSetTexture(d, stage, bt); }
         ti = it->second;
         ReleaseSRWLockShared(&g_lock);
     }
@@ -857,9 +1006,9 @@ static HRESULT STDMETHODCALLTYPE H_SetTexture(IDirect3DDevice9 *d, DWORD stage, 
         if (it != g_tex.end()) ti = it->second;
         ReleaseSRWLockShared(&g_lock);
     }
-    if (!ti.hashed || !ti.hasRep) return o_SetTexture(d, stage, bt);
+    if (!ti.hashed || !ti.hasRep) return DevSetTexture(d, stage, bt);
     IDirect3DTexture9 *rep = AcquireReplacement(d, ti.hash); // com AddRef
-    HRESULT hr = o_SetTexture(d, stage, rep ? (IDirect3DBaseTexture9 *)rep : bt);
+    HRESULT hr = DevSetTexture(d, stage, rep ? (IDirect3DBaseTexture9 *)rep : bt);
     ReleaseInternal(rep); // o device guarda a propria referencia
     return hr;
 }
@@ -867,7 +1016,7 @@ static HRESULT STDMETHODCALLTYPE H_SetTexture(IDirect3DDevice9 *d, DWORD stage, 
 // Textura DEFAULT preenchida via UpdateTexture(sysmem -> default): herda o hash da origem.
 static HRESULT STDMETHODCALLTYPE H_UpdateTexture(IDirect3DDevice9 *d, IDirect3DBaseTexture9 *src, IDirect3DBaseTexture9 *dst)
 {
-    HRESULT hr = o_UpdateTexture(d, src, dst);
+    HRESULT hr = DevUpdateTexture(d, src, dst);
     if (FAILED(hr) || t_internal || !src || !dst) return hr;
     TexInfo si; bool known = false, dstKnown = false;
     {
@@ -891,7 +1040,7 @@ static HRESULT STDMETHODCALLTYPE H_UpdateTexture(IDirect3DDevice9 *d, IDirect3DB
 
 static HRESULT STDMETHODCALLTYPE H_UpdateSurface(IDirect3DDevice9 *d, IDirect3DSurface9 *src, const RECT *rc, IDirect3DSurface9 *dst, const POINT *pt)
 {
-    HRESULT hr = o_UpdateSurface(d, src, rc, dst, pt);
+    HRESULT hr = DevUpdateSurface(d, src, rc, dst, pt);
     if (FAILED(hr) || t_internal || rc || pt || !src || !dst) return hr;
     t_internal++;
     IDirect3DTexture9 *tex = nullptr;
@@ -935,21 +1084,27 @@ static void ReleaseAllReplacements()
 static HRESULT STDMETHODCALLTYPE H_Reset(IDirect3DDevice9 *d, D3DPRESENT_PARAMETERS *pp)
 {
     // texturas D3DPOOL_DEFAULT impedem o Reset; recarregadas sob demanda depois
-    if (g_pool == D3DPOOL_DEFAULT) {
+    if (g_pool == D3DPOOL_DEFAULT && d == g_device) {
         // textura ainda ligada a um stage continua viva e faria o Reset falhar
         t_internal++;
-        for (DWORD s = 0; s < 16; s++) o_SetTexture(d, s, nullptr);
-        for (DWORD s = D3DVERTEXTEXTURESAMPLER0; s <= D3DVERTEXTEXTURESAMPLER3; s++) o_SetTexture(d, s, nullptr);
+        for (DWORD s = 0; s < 16; s++) DevSetTexture(d, s, nullptr);
+        for (DWORD s = D3DVERTEXTEXTURESAMPLER0; s <= D3DVERTEXTEXTURESAMPLER3; s++) DevSetTexture(d, s, nullptr);
         t_internal--;
         ReleaseAllReplacements();
     }
-    HRESULT hr = o_Reset(d, pp);
+    HRESULT hr = DevReset(d, pp);
     Log("Reset -> 0x%08X", (unsigned)hr);
     return hr;
 }
 
 static HRESULT STDMETHODCALLTYPE H_EndScene(IDirect3DDevice9 *d)
 {
+    if (d != g_device) {
+        IDirect3DDevice9 *prev = g_device;
+        g_device = d;
+        if (prev) ReleaseAllReplacements(); // eram do device anterior: textura nao vale em outro device
+        Log("device do jogo: %p", (void *)d);
+    }
     static bool keyWas;
     static DWORD lastStat;
     DWORD fgPid = 0;
@@ -968,34 +1123,35 @@ static HRESULT STDMETHODCALLTYPE H_EndScene(IDirect3DDevice9 *d)
         Log("stats: texturas vivas=%u hashes=%ld matches=%ld carregadas=%ld substituicoes ativas=%u adiadas=%ld",
             (unsigned)live, g_statHashed, g_statMatched, g_statLoaded, (unsigned)reps, g_statDeferred);
     }
-    return o_EndScene(d);
+    return DevEndScene(d);
 }
 
 static HRESULT STDMETHODCALLTYPE H_CreateDevice(IDirect3D9 *d3d, UINT adapter, D3DDEVTYPE type, HWND wnd, DWORD flags,
                                                 D3DPRESENT_PARAMETERS *pp, IDirect3DDevice9 **out)
 {
-    HRESULT hr = o_CreateDevice(d3d, adapter, type, wnd, flags, pp, out);
+    HRESULT hr = D3DCreateDevice(d3d, adapter, type, wnd, flags, pp, out);
     Log("CreateDevice -> 0x%08X flags=0x%X", (unsigned)hr, (unsigned)flags);
     if (FAILED(hr) || !out || !*out) return hr;
     IDirect3DDevice9 *dev = *out;
-    g_device = dev;
-    HookVtbl(dev, VT(IDirect3DDevice9, CreateTexture), H_CreateTexture, &o_CreateTexture);
-    HookVtbl(dev, VT(IDirect3DDevice9, SetTexture), H_SetTexture, &o_SetTexture);
-    HookVtbl(dev, VT(IDirect3DDevice9, UpdateTexture), H_UpdateTexture, &o_UpdateTexture);
-    HookVtbl(dev, VT(IDirect3DDevice9, UpdateSurface), H_UpdateSurface, &o_UpdateSurface);
-    HookVtbl(dev, VT(IDirect3DDevice9, Reset), H_Reset, &o_Reset);
-    HookVtbl(dev, VT(IDirect3DDevice9, EndScene), H_EndScene, &o_EndScene);
-    // instala hooks de textura ja com uma textura de teste
-    if (!o_TexLockRect) {
+    // todo device ganha hooks (cada classe com seus originais), mesmo os de teste que overlays criam;
+    // o device do jogo e escolhido no EndScene
+    HookSlot(dev, VT(IDirect3DDevice9, CreateTexture), (void *)H_CreateTexture);
+    HookSlot(dev, VT(IDirect3DDevice9, SetTexture), (void *)H_SetTexture);
+    HookSlot(dev, VT(IDirect3DDevice9, UpdateTexture), (void *)H_UpdateTexture);
+    HookSlot(dev, VT(IDirect3DDevice9, UpdateSurface), (void *)H_UpdateSurface);
+    HookSlot(dev, VT(IDirect3DDevice9, Reset), (void *)H_Reset);
+    HookSlot(dev, VT(IDirect3DDevice9, EndScene), (void *)H_EndScene);
+    // hooks de textura ja com uma textura de teste (as outras classes entram no CreateTexture)
+    {
         IDirect3DTexture9 *t = nullptr;
         t_internal++;
-        if (SUCCEEDED(o_CreateTexture(dev, 4, 4, 1, 0, D3DFMT_A8R8G8B8, D3DPOOL_MANAGED, &t, nullptr)) && t) {
-            HookTextureVtbl(t);
-            o_TexRelease(t);
+        if (SUCCEEDED(DevCreateTexture(dev, 4, 4, 1, 0, D3DFMT_A8R8G8B8, D3DPOOL_MANAGED, &t, nullptr)) && t) {
+            HookTextureClass(t, D3DPOOL_MANAGED);
+            TexRelease(t);
         }
         t_internal--;
     }
-    Log("hooks de device instalados (device=%p)", (void *)dev);
+    Log("hooks de device instalados (device=%p, tipo=%d, vtable=%p)", (void *)dev, (int)type, (void *)*(void ***)dev);
     return hr;
 }
 
@@ -1029,7 +1185,7 @@ static IDirect3D9 *WINAPI H_Direct3DCreate9(UINT sdk)
         LeaveCriticalSection(&g_d3dCreateCs);
     } else d3d = o_Direct3DCreate9(sdk);
     Log("Direct3DCreate9(0x%X) -> %p", sdk, (void *)d3d);
-    if (d3d) HookVtbl(d3d, VT(IDirect3D9, CreateDevice), H_CreateDevice, &o_CreateDevice);
+    if (d3d) HookSlot(d3d, VT(IDirect3D9, CreateDevice), (void *)H_CreateDevice);
     return d3d;
 }
 
@@ -1067,10 +1223,24 @@ static void Init()
     GetModuleFileNameW(nullptr, g_gameDir, MAX_PATH);
     if (wchar_t *s = wcsrchr(g_gameDir, L'\\')) *s = 0;
     g_log = _wfopen((std::wstring(g_gameDir) + L"\\DS2TexInject.log").c_str(), L"w");
+    std::wstring altLog;
+    int logErr = g_log ? 0 : errno;
+    if (!g_log) {
+        // pasta do jogo sem permissao de escrita (Windows, jogo em C:\Program Files): log em %LOCALAPPDATA%
+        wchar_t la[MAX_PATH];
+        DWORD n = GetEnvironmentVariableW(L"LOCALAPPDATA", la, MAX_PATH);
+        if (n && n < MAX_PATH) {
+            altLog = std::wstring(la) + L"\\DS2TexInject";
+            CreateDirectoryW(altLog.c_str(), nullptr);
+            altLog += L"\\DS2TexInject.log";
+            g_log = _wfopen(altLog.c_str(), L"w");
+        }
+    }
     LoadConfig();
     BudgetInit();
     Log("DS2TexInject " DS2TI_VERSION " iniciado. jogo=%ls pool=%s dump=%d logHashes=%d loadBudget=%d", g_gameDir,
         g_pool == D3DPOOL_MANAGED ? "managed" : "default", g_dump, g_logHashes, g_loadBudget);
+    if (g_log && !altLog.empty()) Log("pasta do jogo sem permissao de escrita (errno=%d): log em %ls", logErr, altLog.c_str());
     CrcInit();
     ScanTextureDir();
     if (HMODULE dx = LoadLibraryW(L"d3dx9_43.dll"))
